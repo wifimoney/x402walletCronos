@@ -3,3 +3,4 @@ export function encodePaymentHeaderClient(decoded: unknown): string {
     // UTF-8 safe base64
     return btoa(unescape(encodeURIComponent(json)));
   }
+  
