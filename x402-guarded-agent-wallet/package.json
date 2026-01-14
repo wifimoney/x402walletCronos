@@ -1,0 +1,32 @@
+{
+  "name": "x402-guarded-agent-wallet",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint"
+  },
+  "dependencies": {
+    "@crypto.com/facilitator-client": "^1.0.4",
+    "nanoid": "^5.1.6",
+    "next": "16.1.1",
+    "pino": "^10.1.1",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "viem": "^2.44.2",
+    "zod": "^4.3.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "babel-plugin-react-compiler": "1.0.0",
+    "eslint": "^9",
+    "eslint-config-next": "16.1.1",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}
