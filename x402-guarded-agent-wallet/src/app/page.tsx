@@ -1,146 +1,318 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { createWalletClient, custom } from "viem";
+import { createWalletClient, createPublicClient, custom, http } from "viem";
 import { encodePaymentHeaderClient } from "@/lib/x402-client";
+import { ERC20_ABI } from "@/lib/abi/erc20";
+import { V2_ROUTER_ABI } from "@/lib/abi/router";
+
+function Tabs({
+  tab,
+  setTab,
+}: {
+  tab: "summary" | "trace" | "json";
+  setTab: (t: "summary" | "trace" | "json") => void;
+}) {
+  return (
+    <div className="flex gap-2 text-sm">
+      {(["summary", "trace", "json"] as const).map((t) => (
+        <button
+          key={t}
+          onClick={() => setTab(t)}
+          className={`px-3 py-1 rounded border ${tab === t ? "bg-black text-white" : ""
+            }`}
+        >
+          {t.toUpperCase()}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 export default function Page() {
   const [prompt, setPrompt] = useState("Swap 10 USDC.e to CRO");
-  const [intent, setIntent] = useState<any>(null);
-  const [policy, setPolicy] = useState<any>(null);
-  const [preflight, setPreflight] = useState<any>(null);
-  const [runReceipt, setRunReceipt] = useState<any>(null);
   const [dryRun, setDryRun] = useState(true);
+  const [loading, setLoading] = useState(false);
+
+  const [runReceipt, setRunReceipt] = useState<any>(null);
   const [payOut, setPayOut] = useState<any>(null);
+  const [tab, setTab] = useState<"summary" | "trace" | "json">("summary");
   const [err, setErr] = useState<string | null>(null);
 
-  const canExecute = useMemo(() => !!intent, [intent]);
+  const intentId = runReceipt?.intent?.id;
 
-  async function plan() {
+  const canPay = useMemo(() => !!intentId && !dryRun, [intentId, dryRun]);
+
+  async function run() {
     setErr(null);
-    setRunReceipt(null);
     setPayOut(null);
-
-    const res = await fetch("/api/plan", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ prompt }),
-    });
-    const data = await res.json();
-    if (!res.ok || !data.ok) {
-      setErr(JSON.stringify(data));
-      return;
+    setLoading(true);
+    try {
+      const res = await fetch("/api/run", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ prompt, dryRun }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(JSON.stringify(data));
+      setRunReceipt(data.runReceipt);
+    } catch (e: any) {
+      setErr(e?.message ?? String(e));
+    } finally {
+      setLoading(false);
     }
-    setIntent(data.intent);
-    setPolicy(null);
-    setPreflight(null);
-  }
-
-  async function doPreflight() {
-    setErr(null);
-    setRunReceipt(null);
-    const res = await fetch("/api/preflight", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ intent, dryRun }),
-    });
-    const data = await res.json();
-    if (!res.ok || !data.ok) {
-      setErr(JSON.stringify(data));
-      return;
-    }
-    setPolicy(data.policy);
-    setPreflight(data.preflight);
-  }
-
-  async function execute() {
-    setErr(null);
-    const res = await fetch("/api/execute", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ intent, dryRun }),
-    });
-    const data = await res.json();
-    if (!res.ok || !data.ok) {
-      setErr(JSON.stringify(data));
-      return;
-    }
-    setRunReceipt(data.runReceipt);
   }
 
   async function payAgentFee() {
     setErr(null);
     setPayOut(null);
 
-    if (!window.ethereum) {
-      setErr("No injected wallet found (MetaMask/Rabby). Use Dry-run for now.");
-      return;
+    if (!intentId) return setErr("Run first to generate intentId.");
+    if (!window.ethereum) return setErr("No injected wallet found (MetaMask/Rabby).");
+
+    try {
+      setLoading(true);
+
+      // request requirements
+      const req = await fetch("/api/pay/requirements", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          amount: runReceipt.intent.fee,
+          intentId,
+        }),
+      }).then((r) => r.json());
+
+      if (!req.ok) throw new Error(JSON.stringify(req));
+
+      const wallet = createWalletClient({ transport: custom(window.ethereum as any) });
+      const [from] = await wallet.requestAddresses();
+
+      const typed = req.typedData;
+      typed.message.from = from;
+
+      const signature = await wallet.signTypedData({
+        domain: typed.domain,
+        types: typed.types,
+        primaryType: typed.primaryType,
+        message: typed.message,
+      } as any);
+
+      const decodedHeader = {
+        x402Version: 1,
+        scheme: req.requirements.scheme,
+        network: req.requirements.network,
+        payload: {
+          from,
+          to: req.requirements.payTo,
+          value: req.requirements.maxAmountRequired,
+          validAfter: typed.message.validAfter,
+          validBefore: typed.message.validBefore,
+          nonce: typed.message.nonce,
+          signature,
+          asset: req.requirements.asset,
+        },
+      };
+
+      const paymentHeader = encodePaymentHeaderClient(decodedHeader);
+
+      const settle = await fetch("/api/pay/settle", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          intentId,
+          paymentHeader,
+          paymentRequirements: req.requirements,
+        }),
+      }).then((r) => r.json());
+
+      setPayOut(settle);
+    } catch (e: any) {
+      setErr(e?.message ?? String(e));
+    } finally {
+      setLoading(false);
     }
-
-    // requirements
-    const req = await fetch("/api/pay/requirements", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ amount: intent.fee }),
-    }).then((r) => r.json());
-
-    if (!req.ok) {
-      setErr(JSON.stringify(req));
-      return;
-    }
-
-    // wallet
-    const wallet = createWalletClient({ transport: custom(window.ethereum as any) });
-    const [from] = await wallet.requestAddresses();
-
-    // sign typed data (EIP-3009)
-    const typed = req.typedData;
-    typed.message.from = from;
-
-    const signature = await wallet.signTypedData({
-      domain: typed.domain,
-      types: typed.types,
-      primaryType: typed.primaryType,
-      message: typed.message,
-    } as any);
-
-    const decodedHeader = {
-      x402Version: 1,
-      scheme: req.requirements.scheme,
-      network: req.requirements.network,
-      payload: {
-        from,
-        to: req.requirements.payTo,
-        value: req.requirements.maxAmountRequired,
-        validAfter: typed.message.validAfter,
-        validBefore: typed.message.validBefore,
-        nonce: typed.message.nonce,
-        signature,
-        asset: req.requirements.asset,
-      },
-    };
-
-    const paymentHeader = encodePaymentHeaderClient(decodedHeader);
-
-    // settle
-    const settle = await fetch("/api/pay/settle", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        paymentHeader,
-        paymentRequirements: req.requirements,
-      }),
-    }).then((r) => r.json());
-
-    setPayOut(settle);
   }
+
+  async function executeOnChain() {
+    setErr(null);
+    if (!window.ethereum) return setErr("No injected wallet found.");
+
+    if (!runReceipt?.intent || !runReceipt?.preflight) {
+      return setErr("Run first so intent + preflight exist.");
+    }
+
+    setLoading(true);
+    try {
+      const wallet = createWalletClient({
+        transport: custom(window.ethereum as any),
+        chain: undefined as any,
+      });
+      const [user] = await wallet.requestAddresses();
+
+      // Prepare deterministic payload (server enforces minOut)
+      const prep = await fetch("/api/prepare", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          intent: runReceipt.intent,
+          preflight: runReceipt.preflight,
+          userAddress: user,
+        }),
+      }).then((r) => r.json());
+
+      if (!prep.ok) throw new Error(JSON.stringify(prep));
+
+      const p = prep.payload as {
+        router: `0x${string}`;
+        tokenIn: `0x${string}`;
+        tokenOut: `0x${string}`;
+        amountIn: string;
+        amountOutMin: string;
+        path: `0x${string}`[];
+        to: `0x${string}`;
+        deadline: number;
+        intentId: string;
+      };
+
+      const rpc = process.env.NEXT_PUBLIC_CRONOS_RPC_URL || runReceipt.intent?.chain?.rpcUrl || "https://evm-t3.cronos.org";
+      const publicClient = createPublicClient({ transport: http(rpc) });
+
+      // Before balances
+      const beforeIn = await publicClient.readContract({
+        address: p.tokenIn,
+        abi: ERC20_ABI,
+        functionName: "balanceOf",
+        args: [user],
+      }) as bigint;
+
+      const beforeOut = await publicClient.readContract({
+        address: p.tokenOut,
+        abi: ERC20_ABI,
+        functionName: "balanceOf",
+        args: [user],
+      }) as bigint;
+
+      // Allowance check
+      const allowance = await publicClient.readContract({
+        address: p.tokenIn,
+        abi: ERC20_ABI,
+        functionName: "allowance",
+        args: [user, p.router],
+      }) as bigint;
+
+      let approveTxHash: `0x${string}` | null = null;
+
+      const amountIn = BigInt(p.amountIn);
+      if (allowance < amountIn) {
+        approveTxHash = await wallet.writeContract({
+          address: p.tokenIn,
+          abi: ERC20_ABI,
+          functionName: "approve",
+          args: [p.router, amountIn],
+          chain: undefined as any,
+          account: user,
+        });
+
+        await publicClient.waitForTransactionReceipt({ hash: approveTxHash });
+      }
+
+      // Swap
+      const swapTxHash = await wallet.writeContract({
+        address: p.router,
+        abi: V2_ROUTER_ABI,
+        functionName: "swapExactTokensForTokens",
+        args: [
+          amountIn,
+          BigInt(p.amountOutMin),
+          p.path,
+          user,
+          BigInt(p.deadline),
+        ],
+        chain: undefined as any,
+        account: user,
+      });
+
+      await publicClient.waitForTransactionReceipt({ hash: swapTxHash });
+
+      // After balances
+      const afterIn = await publicClient.readContract({
+        address: p.tokenIn,
+        abi: ERC20_ABI,
+        functionName: "balanceOf",
+        args: [user],
+      }) as bigint;
+
+      const afterOut = await publicClient.readContract({
+        address: p.tokenOut,
+        abi: ERC20_ABI,
+        functionName: "balanceOf",
+        args: [user],
+      }) as bigint;
+
+      const txBase = process.env.NEXT_PUBLIC_EXPLORER_TX_BASE || "";
+      const approveLink = approveTxHash && txBase ? `${txBase}${approveTxHash}` : null;
+      const swapLink = txBase ? `${txBase}${swapTxHash}` : null;
+
+      // Attach to runReceipt (operational receipts)
+      const updated = {
+        ...runReceipt,
+        execution: {
+          txHash: swapTxHash,
+          status: "success",
+          approveTxHash,
+          links: { approve: approveLink, swap: swapLink },
+          beforeBalances: {
+            tokenIn: beforeIn.toString(),
+            tokenOut: beforeOut.toString(),
+          },
+          afterBalances: {
+            tokenIn: afterIn.toString(),
+            tokenOut: afterOut.toString(),
+          },
+          enforced: {
+            amountOutMin: p.amountOutMin,
+            deadline: p.deadline,
+            path: p.path,
+          },
+        },
+      };
+
+      setRunReceipt(updated);
+    } catch (e: any) {
+      setErr(e?.message ?? String(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const summary = runReceipt
+    ? {
+      intentId: runReceipt.intent?.id,
+      policyAllowed: runReceipt.policy?.allowed,
+      preflightOk: runReceipt.preflight?.ok,
+      quote: {
+        expectedOut: runReceipt.preflight?.quote?.expectedOut ?? null,
+        minOut: runReceipt.preflight?.quote?.minOut ?? null,
+      },
+      execution: runReceipt.execution ? {
+        txHash: runReceipt.execution.txHash,
+        approveTxHash: runReceipt.execution.approveTxHash ?? null,
+        links: runReceipt.execution.links,
+        beforeBalances: runReceipt.execution.beforeBalances,
+        afterBalances: runReceipt.execution.afterBalances,
+        enforced: runReceipt.execution.enforced,
+      } : null,
+      dryRun: runReceipt.dryRun,
+    }
+    : null;
 
   return (
     <main className="min-h-screen p-6 max-w-4xl mx-auto space-y-4">
       <header className="space-y-1">
         <h1 className="text-2xl font-semibold">x402 Guarded Agent Wallet</h1>
         <p className="text-sm opacity-80">
-          P3: plan → policy/preflight → (optional pay) → execute → receipts
+          Operational flow: Run → (optional Pay) → Run again (real mode gate)
         </p>
       </header>
 
@@ -150,10 +322,15 @@ export default function Page() {
           className="w-full border rounded p-3 min-h-[90px]"
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
+          disabled={loading}
         />
         <div className="flex items-center gap-3">
-          <button className="px-4 py-2 rounded bg-black text-white" onClick={plan}>
-            Plan
+          <button
+            className="px-4 py-2 rounded bg-black text-white disabled:opacity-50"
+            onClick={run}
+            disabled={loading}
+          >
+            {loading ? "Running..." : "Run (Plan→Preflight→Execute)"}
           </button>
 
           <label className="flex items-center gap-2 text-sm">
@@ -161,33 +338,27 @@ export default function Page() {
               type="checkbox"
               checked={dryRun}
               onChange={(e) => setDryRun(e.target.checked)}
+              disabled={loading}
             />
             Dry-run only (no payment)
           </label>
 
           <button
-            className="px-4 py-2 rounded border"
-            disabled={!intent}
-            onClick={doPreflight}
-          >
-            Preflight
-          </button>
-
-          <button
-            className="px-4 py-2 rounded border"
-            disabled={!canExecute}
-            onClick={execute}
-          >
-            Execute
-          </button>
-
-          <button
-            className="px-4 py-2 rounded border"
-            disabled={!intent || dryRun}
+            className="px-4 py-2 rounded border disabled:opacity-50"
             onClick={payAgentFee}
+            disabled={loading || !canPay}
             title={dryRun ? "Disable dry-run to enable payment" : "Pay agent fee via x402"}
           >
             Pay agent fee (x402)
+          </button>
+
+          <button
+            className="px-4 py-2 rounded border disabled:opacity-50"
+            disabled={loading || dryRun}
+            onClick={executeOnChain}
+            title={dryRun ? "Disable dry-run to enable real execution" : "Client-signed approve+swap"}
+          >
+            Execute swap (client-signed)
           </button>
         </div>
       </section>
@@ -198,32 +369,43 @@ export default function Page() {
         </pre>
       )}
 
-      <section className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="border rounded p-3">
-          <div className="text-sm font-semibold mb-2">Intent</div>
-          <pre className="text-xs overflow-auto">{JSON.stringify(intent, null, 2)}</pre>
-        </div>
+      {runReceipt && (
+        <section className="border rounded p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="text-sm font-semibold">
+              RunReceipt (intentId: <span className="font-mono">{intentId}</span>)
+            </div>
+            <Tabs tab={tab} setTab={setTab} />
+          </div>
 
-        <div className="border rounded p-3">
-          <div className="text-sm font-semibold mb-2">Policy</div>
-          <pre className="text-xs overflow-auto">{JSON.stringify(policy, null, 2)}</pre>
-        </div>
+          {tab === "summary" && (
+            <pre className="text-xs overflow-auto bg-gray-50 border rounded p-3">
+              {JSON.stringify(summary, null, 2)}
+            </pre>
+          )}
 
-        <div className="border rounded p-3">
-          <div className="text-sm font-semibold mb-2">Preflight</div>
-          <pre className="text-xs overflow-auto">{JSON.stringify(preflight, null, 2)}</pre>
-        </div>
+          {tab === "trace" && (
+            <pre className="text-xs overflow-auto bg-gray-50 border rounded p-3">
+              {JSON.stringify(runReceipt.trace, null, 2)}
+            </pre>
+          )}
 
-        <div className="border rounded p-3">
+          {tab === "json" && (
+            <pre className="text-xs overflow-auto bg-gray-50 border rounded p-3">
+              {JSON.stringify(runReceipt, null, 2)}
+            </pre>
+          )}
+        </section>
+      )}
+
+      {payOut && (
+        <section className="border rounded p-4">
           <div className="text-sm font-semibold mb-2">Pay result</div>
-          <pre className="text-xs overflow-auto">{JSON.stringify(payOut, null, 2)}</pre>
-        </div>
-      </section>
-
-      <section className="border rounded p-3">
-        <div className="text-sm font-semibold mb-2">RunReceipt (what judges see)</div>
-        <pre className="text-xs overflow-auto">{JSON.stringify(runReceipt, null, 2)}</pre>
-      </section>
+          <pre className="text-xs overflow-auto bg-gray-50 border rounded p-3">
+            {JSON.stringify(payOut, null, 2)}
+          </pre>
+        </section>
+      )}
     </main>
   );
 }

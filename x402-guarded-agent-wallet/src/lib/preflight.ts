@@ -107,7 +107,14 @@ export async function runPreflight(intent: ActionIntent): Promise<PreflightRecei
     });
 
     const expectedOut = (amounts as bigint[])[(amounts as bigint[]).length - 1].toString();
-    receipt.quote = { expectedOut, path: [tokenIn, tokenOut] };
+    const slippageBps = intent.params.maxSlippageBps;
+    const minOut = (BigInt(expectedOut) * BigInt(10_000 - slippageBps)) / BigInt(10_000);
+
+    receipt.quote = {
+      expectedOut,
+      minOut: minOut.toString(),
+      path: [tokenIn, tokenOut]
+    };
     receipt.simulation = {
       success: true,
       notes: "Quote via getAmountsOut succeeded (acts as a staticcall preflight).",

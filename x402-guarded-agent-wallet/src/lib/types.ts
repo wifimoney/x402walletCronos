@@ -1,6 +1,8 @@
 export type CronosNetwork = "cronos-testnet" | "cronos-mainnet";
 
 export type ActionIntent = {
+  id: string;                  // unique intent identifier
+  createdAt: number;           // unix seconds
   action: "swap";
   params: {
     tokenIn: `0x${string}`;   // USDC.e
@@ -23,6 +25,7 @@ export type PreflightReceipt = {
   };
   quote?: {
     expectedOut: string;
+    minOut: string;
     path: string[];
   };
   simulation?: {

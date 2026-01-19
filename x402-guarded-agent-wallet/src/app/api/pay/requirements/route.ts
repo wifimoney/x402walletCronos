@@ -20,7 +20,7 @@ export async function POST(req: Request) {
       typedData,
       nonce,
       expiresInSeconds: 60,
-      intentId: parsed.data.sessionId ?? null,
+      intentId: parsed.data.intentId,
     });
   } catch (e: any) {
     return NextResponse.json(

@@ -37,3 +37,4 @@ Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/bui
 
 N.B DO NOT FORGET TO SET x402 CLIENT + PRIVATE KEY FOR FUNCTIONALITY!
     ALSO... SEE IF YOU CAN GET SPONSORED TRANSACTIONS!
+    

@@ -16,11 +16,11 @@ const ERC20NameAbi = parseAbi(["function name() view returns (string)"]);
 
 export const RequirementsReqSchema = z.object({
   amount: z.string(), // USDC.e base units
-  // optional: for your own correlators
-  sessionId: z.string().optional(),
+  intentId: z.string().min(6), // required for payment keying
 });
 
 export const SettleReqSchema = z.object({
+  intentId: z.string().min(6), // required for payment keying
   paymentHeader: z.string(), // base64 string
   paymentRequirements: z.object({
     scheme: z.literal("exact"),
@@ -35,23 +35,23 @@ export const SettleReqSchema = z.object({
 type FacilitatorVerifyResponse = { isValid: boolean; invalidReason: string | null };
 type FacilitatorSettleResponse =
   | {
-      x402Version: 1;
-      event: "payment.settled";
-      txHash: `0x${string}`;
-      from: `0x${string}`;
-      to: `0x${string}`;
-      value: string;
-      blockNumber: number;
-      network: string;
-      timestamp: string;
-    }
+    x402Version: 1;
+    event: "payment.settled";
+    txHash: `0x${string}`;
+    from: `0x${string}`;
+    to: `0x${string}`;
+    value: string;
+    blockNumber: number;
+    network: string;
+    timestamp: string;
+  }
   | {
-      x402Version: 1;
-      event: "payment.failed";
-      network: string;
-      error?: string;
-      message?: string;
-    };
+    x402Version: 1;
+    event: "payment.failed";
+    network: string;
+    error?: string;
+    message?: string;
+  };
 
 // In-memory “idempotency”: nonce -> settled response
 const settledCache = new Map<string, FacilitatorSettleResponse>();

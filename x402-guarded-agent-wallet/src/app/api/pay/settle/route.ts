@@ -18,9 +18,8 @@ export async function POST(req: Request) {
     paymentRequirements: parsed.data.paymentRequirements as any,
   });
 
-  // Best-effort cache (intentId isn’t in schema yet; you can add it later)
+  // Cache payment by intentId if settled
   try {
-    // decode nonce from header so we can cache by it (and later tie to intentId)
     const decoded = JSON.parse(
       Buffer.from(parsed.data.paymentHeader, "base64").toString("utf8")
     );
@@ -28,14 +27,14 @@ export async function POST(req: Request) {
 
     if (out.settle && (out.settle as any).event === "payment.settled") {
       markPaid({
-        intentId: parsed.data.paymentRequirements.payTo, // TEMP placeholder key
+        intentId: parsed.data.intentId,
         nonce,
         settledTxHash: (out.settle as any).txHash,
         receipt: out.settle,
         ts: Date.now(),
       });
     }
-  } catch {}
+  } catch { }
 
   return NextResponse.json({ ok: true, ...out });
 }

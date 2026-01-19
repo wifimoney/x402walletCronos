@@ -1,3 +1,4 @@
+import { nanoid } from "nanoid";
 import { CRONOS_NETWORK, USDC_E, WCRO, ROUTER_ADDRESS } from "./constants";
 import type { ActionIntent } from "./types";
 
@@ -29,6 +30,8 @@ export function buildIntent(opts: {
   const maxSlippageBps = 50; // 0.50%
 
   return {
+    id: nanoid(10),
+    createdAt: now,
     action: "swap",
     params: {
       tokenIn,
