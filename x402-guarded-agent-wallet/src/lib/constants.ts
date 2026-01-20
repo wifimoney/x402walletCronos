@@ -34,3 +34,9 @@ export const WCRO: Record<CronosNetwork, `0x${string}`> = {
   // If you don’t have one yet, leave tokenOut in the plan as CRO and skip quote until you set this.
   "cronos-testnet": "0x0000000000000000000000000000000000000000",
 };
+
+// Common Quote Token (PHOTON) - Replace with actual address
+export const PHOTON: Record<CronosNetwork, `0x${string}`> = {
+  "cronos-mainnet": "0x0000000000000000000000000000000000000000", // TODO: Set mainnet PHOTON
+  "cronos-testnet": "0x0000000000000000000000000000000000000000", // TODO: Set testnet PHOTON
+};

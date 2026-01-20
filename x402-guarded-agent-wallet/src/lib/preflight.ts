@@ -5,6 +5,7 @@ import {
   CRONOS_RPC_URL,
   FACILITATOR_BASE_URL,
   ROUTER_ADDRESS,
+  PHOTON,
 } from "./constants";
 import type { ActionIntent, PreflightReceipt } from "./types";
 import { fetchJsonWithRetry } from "./http";
@@ -60,24 +61,41 @@ export async function runPreflight(intent: ActionIntent): Promise<PreflightRecei
       { method: "GET" },
       { retries: 1, timeoutMs: 6_000 }
     );
-    receipt.health.supportedOk = !!s.data?.kinds?.some(
+    const supported = s.data?.kinds?.find(
       (k) => k.x402Version === 1 && k.scheme === "exact" && k.network === CRONOS_NETWORK
     );
+    receipt.health.supportedOk = !!supported;
+    if (supported) {
+      receipt.health.supported = {
+        network: supported.network,
+        scheme: supported.scheme,
+        x402Version: supported.x402Version,
+      };
+    }
 
     // 3) RPC basic call
     const client = createPublicClient({
-      transport: http(CRONOS_RPC_URL),
+      transport: http((intent as any).simulateRpcDown ? "https://down.rpc" : CRONOS_RPC_URL),
       chain: undefined as any, // we only use raw calls
     });
 
     const rpcStarted = Date.now();
-    await client.getBlockNumber();
-    receipt.health.rpcUp = true;
-    receipt.health.latencyMs.rpc = Date.now() - rpcStarted;
+    try {
+      await client.getBlockNumber();
+      receipt.health.rpcUp = true;
+      receipt.health.latencyMs.rpc = Date.now() - rpcStarted;
+    } catch (e) {
+      receipt.health.rpcUp = false;
+      receipt.health.latencyMs.rpc = Date.now() - rpcStarted; // track timeout/fail time
+      receipt.error = "RPC_DOWN";
+      receipt.ok = false;
+      return receipt;
+    }
 
-    // 4) Quote “simulation”
+    // 4) Quote “simulation” / Route Discovery
     const tokenIn = intent.params.tokenIn as `0x${string}`;
     const tokenOut = intent.params.tokenOut as `0x${string}`;
+    const photon = PHOTON[CRONOS_NETWORK];
 
     if (!isAddress(ROUTER_ADDRESS) || ROUTER_ADDRESS === ("0x" + "0".repeat(40))) {
       receipt.simulation = {
@@ -99,25 +117,68 @@ export async function runPreflight(intent: ActionIntent): Promise<PreflightRecei
       return receipt;
     }
 
-    const amounts = await client.readContract({
-      address: ROUTER_ADDRESS,
-      abi: RouterAbi,
-      functionName: "getAmountsOut",
-      args: [BigInt(intent.params.amountIn), [tokenIn, tokenOut]],
-    });
+    // Define paths to try
+    const pathsToTry: `0x${string}`[][] = [];
+    pathsToTry.push([tokenIn, tokenOut]); // Direct
+    if (photon && photon !== tokenIn && photon !== tokenOut) {
+      pathsToTry.push([tokenIn, photon, tokenOut]); // Hop via PHOTON
+    }
+    // Sanity check path (just to see if we can quote *anything* if main fails?)
+    // kept simple: strictly trying to get to tokenOut.
 
-    const expectedOut = (amounts as bigint[])[(amounts as bigint[]).length - 1].toString();
+    let bestQuote: { amountOut: bigint; path: `0x${string}`[] } | null = null;
+    const pathsTriedLog: string[][] = [];
+
+    for (const path of pathsToTry) {
+      pathsTriedLog.push(path);
+      try {
+        const amounts = await client.readContract({
+          address: ROUTER_ADDRESS,
+          abi: RouterAbi,
+          functionName: "getAmountsOut",
+          args: [BigInt(intent.params.amountIn), path],
+        }) as bigint[];
+
+        const out = amounts[amounts.length - 1];
+        if (!bestQuote || out > bestQuote.amountOut) {
+          bestQuote = { amountOut: out, path };
+        }
+      } catch (e) {
+        // ignore path failure, try next
+      }
+    }
+
+    if (!bestQuote) {
+      receipt.quote = {
+        expectedOut: "0",
+        minOut: "0",
+        path: [],
+        pathUsed: [],
+        pathsTried: pathsTriedLog,
+      };
+      receipt.simulation = {
+        success: false,
+        notes: "No valid route found (all attempted paths reverted or returned 0).",
+        revertReason: "NO_ROUTE",
+      };
+      receipt.ok = false;
+      return receipt;
+    }
+
+    const expectedOut = bestQuote.amountOut.toString();
     const slippageBps = intent.params.maxSlippageBps;
-    const minOut = (BigInt(expectedOut) * BigInt(10_000 - slippageBps)) / BigInt(10_000);
+    const minOut = (bestQuote.amountOut * BigInt(10_000 - slippageBps)) / BigInt(10_000);
 
     receipt.quote = {
       expectedOut,
       minOut: minOut.toString(),
-      path: [tokenIn, tokenOut]
+      path: bestQuote.path,
+      pathUsed: bestQuote.path,
+      pathsTried: pathsTriedLog,
     };
     receipt.simulation = {
       success: true,
-      notes: "Quote via getAmountsOut succeeded (acts as a staticcall preflight).",
+      notes: "Quote via getAmountsOut succeeded.",
       revertReason: null,
     };
 
@@ -125,7 +186,8 @@ export async function runPreflight(intent: ActionIntent): Promise<PreflightRecei
       receipt.health.facilitatorUp &&
       receipt.health.supportedOk &&
       receipt.health.rpcUp &&
-      !!receipt.quote?.expectedOut;
+      !!receipt.quote?.expectedOut &&
+      receipt.quote.expectedOut !== "0";
 
     return receipt;
   } catch (e: any) {

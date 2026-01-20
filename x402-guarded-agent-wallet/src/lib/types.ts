@@ -20,13 +20,16 @@ export type PreflightReceipt = {
   health: {
     facilitatorUp: boolean;
     supportedOk: boolean;
+    supported?: { network: string; scheme: string; x402Version: number } | null;
     rpcUp: boolean;
     latencyMs: { facilitator?: number; rpc?: number };
   };
   quote?: {
     expectedOut: string;
     minOut: string;
-    path: string[];
+    path: string[];          // The successful path
+    pathUsed: string[];      // Alias for path, for explicit tracking
+    pathsTried: string[][];  // History of paths attempted
   };
   simulation?: {
     success: boolean;
@@ -60,4 +63,28 @@ export type X402DecodedPaymentHeader = {
     signature: `0x${string}`;
     asset: `0x${string}`;
   };
+};
+
+export type RunReceipt = {
+  intent: ActionIntent;
+  policy: { allowed: boolean; rulesTriggered: string[]; reason?: string };
+  preflight: PreflightReceipt;
+  dryRun: boolean;
+  payment: { ok: boolean; error?: string; txHash?: string; receiptId?: string } | null;
+  x402?: {
+    verify: { isValid: boolean };
+    settle: { txHash?: string; link?: string };
+  };
+  execution: {
+    txHash: string;
+    status: "success" | "reverted" | "failed";
+    approveTxHash?: string | null;
+    links?: { approve?: string | null; swap?: string | null };
+    beforeBalances?: { tokenIn: string; tokenOut: string };
+    afterBalances?: { tokenIn: string; tokenOut: string };
+    balanceDeltas?: { tokenIn: string; tokenOut: string };
+    enforced?: { amountOutMin: string; deadline: number; path: `0x${string}`[] };
+    logsSummary: string[];
+  } | null;
+  trace: any[];
 };

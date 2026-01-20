@@ -32,7 +32,10 @@ function Tabs({
 export default function Page() {
   const [prompt, setPrompt] = useState("Swap 10 USDC.e to CRO");
   const [dryRun, setDryRun] = useState(true);
+  const [simulateRpcDown, setSimulateRpcDown] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  const [lastRunPrompt, setLastRunPrompt] = useState("");
 
   const [runReceipt, setRunReceipt] = useState<any>(null);
   const [payOut, setPayOut] = useState<any>(null);
@@ -43,15 +46,26 @@ export default function Page() {
 
   const canPay = useMemo(() => !!intentId && !dryRun, [intentId, dryRun]);
 
-  async function run() {
+  async function run(simulateExpired = false) {
     setErr(null);
     setPayOut(null);
     setLoading(true);
     try {
+      const body: any = { dryRun, simulateRpcDown };
+
+      // If prompt hasn't changed and we have an intent, try to resume/execute it
+      // This is critical for the "Pay -> Run (Real)" flow
+      if (prompt === lastRunPrompt && runReceipt?.intent) {
+        body.intent = runReceipt.intent;
+      } else {
+        body.prompt = prompt;
+        setLastRunPrompt(prompt);
+      }
+
       const res = await fetch("/api/run", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ prompt, dryRun }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(JSON.stringify(data));
@@ -270,6 +284,10 @@ export default function Page() {
             tokenIn: afterIn.toString(),
             tokenOut: afterOut.toString(),
           },
+          balanceDeltas: {
+            tokenIn: (afterIn - beforeIn).toString(),
+            tokenOut: (afterOut - beforeOut).toString(),
+          },
           enforced: {
             amountOutMin: p.amountOutMin,
             deadline: p.deadline,
@@ -327,7 +345,7 @@ export default function Page() {
         <div className="flex items-center gap-3">
           <button
             className="px-4 py-2 rounded bg-black text-white disabled:opacity-50"
-            onClick={run}
+            onClick={() => run()}
             disabled={loading}
           >
             {loading ? "Running..." : "Run (Plan→Preflight→Execute)"}
@@ -361,6 +379,20 @@ export default function Page() {
             Execute swap (client-signed)
           </button>
         </div>
+
+        <div className="flex items-center gap-4 pt-2">
+          <button
+            className="text-xs text-gray-500 underline"
+            onClick={() => {
+              // Quick hack to force expire next run
+              // Ideally we pass this via state to run()
+              run(true);
+            }}
+            disabled={loading}
+          >
+            Simulate Expired Intent (Dev)
+          </button>
+        </div>
       </section>
 
       {err && (
@@ -379,19 +411,19 @@ export default function Page() {
           </div>
 
           {tab === "summary" && (
-            <pre className="text-xs overflow-auto bg-gray-50 border rounded p-3">
+            <pre className="text-xs overflow-auto bg-black text-white border rounded p-3">
               {JSON.stringify(summary, null, 2)}
             </pre>
           )}
 
           {tab === "trace" && (
-            <pre className="text-xs overflow-auto bg-gray-50 border rounded p-3">
+            <pre className="text-xs overflow-auto bg-black text-white border rounded p-3">
               {JSON.stringify(runReceipt.trace, null, 2)}
             </pre>
           )}
 
           {tab === "json" && (
-            <pre className="text-xs overflow-auto bg-gray-50 border rounded p-3">
+            <pre className="text-xs overflow-auto bg-black text-white border rounded p-3">
               {JSON.stringify(runReceipt, null, 2)}
             </pre>
           )}
@@ -401,7 +433,7 @@ export default function Page() {
       {payOut && (
         <section className="border rounded p-4">
           <div className="text-sm font-semibold mb-2">Pay result</div>
-          <pre className="text-xs overflow-auto bg-gray-50 border rounded p-3">
+          <pre className="text-xs overflow-auto bg-black text-white border rounded p-3">
             {JSON.stringify(payOut, null, 2)}
           </pre>
         </section>
