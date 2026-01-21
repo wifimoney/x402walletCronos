@@ -232,9 +232,18 @@ export default function Page() {
       const rpc = process.env.NEXT_PUBLIC_CRONOS_RPC_URL || "https://evm-t3.cronos.org";
       const publicClient = createPublicClient({ transport: http(rpc) });
 
+      // Backward compatibility: Old intents used tokenIn, new ones use token
+      const tokenAddress = (p.token || p.tokenIn) as `0x${string}`;
+      const recipientAddress = (p.to || user) as `0x${string}`;
+      const transferAmount = p.amount || p.amountIn;
+
+      if (!tokenAddress) {
+        throw new Error("Missing token address in intent. Please create a new intent.");
+      }
+
       // Before balance (Token)
       const before = await publicClient.readContract({
-        address: p.token,
+        address: tokenAddress,
         abi: ERC20_ABI,
         functionName: "balanceOf",
         args: [user],
@@ -245,13 +254,13 @@ export default function Page() {
       workflowPath.push("transfer");
 
       // Transfer
-      const amount = BigInt(p.amount);
+      const amount = BigInt(transferAmount);
       const txHash = await walletClient.writeContract({
-        address: p.token,
+        address: tokenAddress,
         abi: ERC20_ABI,
         functionName: "transfer",
         args: [
-          p.to,
+          recipientAddress,
           amount,
         ],
         chain: undefined as any,
@@ -262,7 +271,7 @@ export default function Page() {
 
       // After balance
       const after = await publicClient.readContract({
-        address: p.token,
+        address: tokenAddress,
         abi: ERC20_ABI,
         functionName: "balanceOf",
         args: [user],
@@ -282,7 +291,7 @@ export default function Page() {
             token: (after - before).toString(),
           },
           enforced: {
-            amount: p.amount,
+            amount: transferAmount,
           },
           workflowPath,
           logsSummary: ["Transfer executed successfully"]
