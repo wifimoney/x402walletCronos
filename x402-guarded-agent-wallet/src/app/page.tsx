@@ -6,6 +6,12 @@ import { encodePaymentHeaderClient } from "@/lib/x402-client";
 import { ERC20_ABI } from "@/lib/abi/erc20";
 import { V2_ROUTER_ABI } from "@/lib/abi/router";
 import ConnectBar from "@/components/ConnectBar";
+import StepTimeline from "@/components/StepTimeline";
+import CostBox from "@/components/CostBox";
+import RecipientSelector from "@/components/RecipientSelector";
+
+// Default seller address (could be env var)
+const DEFAULT_SELLER = "0x5077eDDBCEA8692E81338aDC922ACF1A47699885";
 
 // Define Cronos Testnet chain
 const cronosTestnet = defineChain({
@@ -51,6 +57,7 @@ export default function Page() {
 
   // --- 2. Run / Input State ---
   const [prompt, setPrompt] = useState("Transfer 10 USDC.e");
+  const [recipient, setRecipient] = useState(DEFAULT_SELLER);
   const [dryRun, setDryRun] = useState(true);
   const [simulateRpcDown, setSimulateRpcDown] = useState(false);
 
@@ -65,6 +72,7 @@ export default function Page() {
   const [lastRunPrompt, setLastRunPrompt] = useState("");
 
   const [tab, setTab] = useState<"summary" | "trace" | "json">("summary");
+  const [historyFilter, setHistoryFilter] = useState<"all" | "failed" | "executed" | "dryrun">("all");
 
   // Load from local storage
   useEffect(() => {
@@ -116,6 +124,7 @@ export default function Page() {
         body.intent = runReceipt.intent;
       } else {
         body.prompt = prompt;
+        body.recipient = recipient; // Pass selected recipient
         setLastRunPrompt(prompt);
       }
 
@@ -421,6 +430,14 @@ export default function Page() {
                 />
               </div>
 
+              {/* Recipient Selector */}
+              <RecipientSelector
+                sellerAddress={DEFAULT_SELLER}
+                userAddress={wallet?.address}
+                value={recipient}
+                onChange={setRecipient}
+              />
+
               <div className="pt-2">
                 <button
                   className={`w-full py-3 rounded-lg text-sm font-bold tracking-wide uppercase transition-all ${loading
@@ -454,13 +471,39 @@ export default function Page() {
                   Simulate Fail
                 </label>
               </div>
+
+              {/* Cost Box - Show after preflight */}
+              {runReceipt?.preflight?.ok && (
+                <CostBox
+                  amount={runReceipt.intent?.params?.amount || "0"}
+                  fee={runReceipt.intent?.fee || "0"}
+                  balance={runReceipt.preflight?.data?.balance || "0"}
+                />
+              )}
             </div>
 
-            {/* 2. Runs List */}
+            {/* 2. Ops Table (History) */}
             <div className="panel-tech p-0 overflow-hidden flex flex-col max-h-[600px]">
-              <div className="p-4 border-b border-white/5 bg-black/20 flex justify-between items-center backdrop-blur-md">
-                <h2 className="text-sm font-bold text-gray-400 uppercase tracking-wider">History Log</h2>
-                <span className="text-[10px] bg-white/5 px-2 py-0.5 rounded-full text-gray-500 font-mono">{runs.length}</span>
+              <div className="p-3 border-b border-white/5 bg-black/20 backdrop-blur-md">
+                <div className="flex justify-between items-center mb-2">
+                  <h2 className="text-sm font-bold text-gray-400 uppercase tracking-wider">Ops Log</h2>
+                  <span className="text-[10px] bg-white/5 px-2 py-0.5 rounded-full text-gray-500 font-mono">{runs.length}</span>
+                </div>
+                {/* Filter Pills */}
+                <div className="flex gap-1">
+                  {(["all", "executed", "failed", "dryrun"] as const).map(f => (
+                    <button
+                      key={f}
+                      onClick={() => setHistoryFilter(f)}
+                      className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase transition-all ${historyFilter === f
+                        ? "bg-blue-500/20 text-blue-300 border border-blue-500/30"
+                        : "text-gray-600 hover:text-gray-400 border border-transparent"
+                        }`}
+                    >
+                      {f}
+                    </button>
+                  ))}
+                </div>
               </div>
               <div className="overflow-y-auto flex-1 p-2 space-y-1 custom-scrollbar">
                 {runs.length === 0 && (
@@ -469,52 +512,78 @@ export default function Page() {
                     <span className="text-xs italic">No execution history found</span>
                   </div>
                 )}
-                {runs.map((r, i) => {
-                  const rid = r.intent?.id;
-                  const rRisk = r.risk?.score ?? 0;
-                  const isActive = rid === runReceipt?.intent?.id;
-                  const status = r.execution?.status === 'success' ? 'EXECUTED'
-                    : r.payment?.ok ? 'PAID'
-                      : r.preflight?.ok ? 'READY'
-                        : 'FAILED';
+                {runs
+                  .filter(r => {
+                    if (historyFilter === "all") return true;
+                    const status = r.execution?.status === 'success' ? 'executed'
+                      : r.preflight?.ok === false || r.policy?.allowed === false ? 'failed'
+                        : r.dryRun ? 'dryrun' : 'all';
+                    return status === historyFilter;
+                  })
+                  .map((r, i) => {
+                    const rid = r.intent?.id;
+                    const rRisk = r.risk?.score ?? 0;
+                    const isActive = rid === runReceipt?.intent?.id;
+                    const status = r.execution?.status === 'success' ? 'EXECUTED'
+                      : r.payment?.ok ? 'PAID'
+                        : r.preflight?.ok ? 'READY'
+                          : 'FAILED';
 
-                  // Status Colors
-                  const statusColor = status === 'EXECUTED' ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20' :
-                    status === 'FAILED' ? 'text-red-400 bg-red-500/10 border-red-500/20' :
-                      status === 'PAID' ? 'text-amber-400 bg-amber-500/10 border-amber-500/20' :
-                        'text-blue-400 bg-blue-500/10 border-blue-500/20';
+                    // Status Colors
+                    const statusColor = status === 'EXECUTED' ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20' :
+                      status === 'FAILED' ? 'text-red-400 bg-red-500/10 border-red-500/20' :
+                        status === 'PAID' ? 'text-amber-400 bg-amber-500/10 border-amber-500/20' :
+                          'text-blue-400 bg-blue-500/10 border-blue-500/20';
 
-                  return (
-                    <div
-                      key={rid || i}
-                      onClick={() => setRunReceipt(r)}
-                      className={`p-3 rounded-lg border cursor-pointer transition-all group ${isActive
-                        ? "bg-white/5 border-blue-500/30 shadow-[inset_0_0_10px_rgba(59,130,246,0.1)]"
-                        : "bg-transparent border-transparent hover:bg-white/5 hover:border-white/10"
-                        }`}
-                    >
-                      <div className="flex justify-between items-start mb-2">
-                        <span className={`text-[9px] px-1.5 py-px rounded border font-mono font-bold tracking-tight ${statusColor}`}>{status}</span>
-                        <span className="text-[9px] text-gray-600 font-mono group-hover:text-gray-400 transition-colors">
-                          {rid?.slice(0, 8)}
-                        </span>
-                      </div>
-                      <div className="text-xs text-gray-300 line-clamp-1 mb-2 font-medium opacity-90 truncate">
-                        {((r.intent as any)?.params?.token) ?
-                          `Transfer ${(r.intent as any).params.amount} USDC.e`
-                          : "Unknown Intent"}
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className={`flex items-center gap-1.5 text-[9px] font-bold ${rRisk > 50 ? 'text-red-400' : rRisk > 20 ? 'text-amber-400' : 'text-emerald-400'
-                          }`}>
-                          <div className={`w-1 h-1 rounded-full shadow-[0_0_5px_currentColor] ${rRisk > 50 ? 'bg-red-500' : rRisk > 20 ? 'bg-amber-500' : 'bg-emerald-500'
-                            }`} />
-                          RISK {rRisk}
+                    return (
+                      <div
+                        key={rid || i}
+                        onClick={() => setRunReceipt(r)}
+                        className={`p-3 rounded-lg border cursor-pointer transition-all group ${isActive
+                          ? "bg-white/5 border-blue-500/30 shadow-[inset_0_0_10px_rgba(59,130,246,0.1)]"
+                          : "bg-transparent border-transparent hover:bg-white/5 hover:border-white/10"
+                          }`}
+                      >
+                        <div className="flex justify-between items-start mb-2">
+                          <span className={`text-[9px] px-1.5 py-px rounded border font-mono font-bold tracking-tight ${statusColor}`}>{status}</span>
+                          <span className="text-[9px] text-gray-600 font-mono group-hover:text-gray-400 transition-colors">
+                            {rid?.slice(0, 8)}
+                          </span>
+                        </div>
+                        <div className="text-xs text-gray-300 line-clamp-1 mb-2 font-medium opacity-90 truncate">
+                          {((r.intent as any)?.params?.token) ?
+                            `Transfer ${(r.intent as any).params.amount} USDC.e`
+                            : "Unknown Intent"}
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <div className={`flex items-center gap-1.5 text-[9px] font-bold ${rRisk > 50 ? 'text-red-400' : rRisk > 20 ? 'text-amber-400' : 'text-emerald-400'
+                            }`}>
+                            <div className={`w-1 h-1 rounded-full shadow-[0_0_5px_currentColor] ${rRisk > 50 ? 'bg-red-500' : rRisk > 20 ? 'bg-amber-500' : 'bg-emerald-500'
+                              }`} />
+                            RISK {rRisk}
+                          </div>
+                          {/* Quick Actions */}
+                          <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button
+                              onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(rid || ""); }}
+                              className="text-gray-500 hover:text-blue-400 text-xs"
+                              title="Copy ID"
+                            >📋</button>
+                            {r.execution?.links?.tx && (
+                              <a
+                                href={r.execution.links.tx}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="text-gray-500 hover:text-blue-400 text-xs"
+                                title="View TX"
+                              >🔗</a>
+                            )}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
               </div>
             </div>
 
@@ -535,6 +604,9 @@ export default function Page() {
 
             {runReceipt ? (
               <>
+                {/* Step Timeline */}
+                <StepTimeline receipt={runReceipt} />
+
                 {/* Action Bar for Selected Run */}
                 <div className="panel-tech p-5 flex flex-wrap items-center gap-4 justify-between relative overflow-hidden">
                   <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500/0 via-blue-500/50 to-blue-500/0 opacity-20"></div>
@@ -668,19 +740,46 @@ export default function Page() {
                       </div>
                     )}
                     {tab === "trace" && (
-                      <div className="font-mono text-xs divide-y divide-white/5">
-                        {runReceipt.trace?.map((t: any, i: number) => (
-                          <div key={i} className={`p-4 flex gap-4 items-center group transition-colors ${!t.ok ? "bg-red-500/5" : "hover:bg-white/5"}`}>
-                            <span className="text-gray-500 w-24 shrink-0 font-medium opacity-60">
-                              {new Date(t.tsUnix * 1000).toLocaleTimeString()}
-                            </span>
-                            <div className={`w-2 h-2 rounded-full shrink-0 ${t.ok ? "bg-emerald-500 shadow-[0_0_8px_#10b981]" : "bg-red-500 shadow-[0_0_8px_#ef4444]"}`}></div>
-                            <span className={`w-24 shrink-0 font-bold tracking-tight uppercase ${t.ok ? "text-emerald-400" : "text-red-400"}`}>
-                              {t.step}
-                            </span>
-                            <span className="text-gray-300 opacity-90">{t.message}</span>
-                          </div>
-                        ))}
+                      <div className="font-mono text-xs">
+                        {(() => {
+                          const baseTs = runReceipt.trace?.[0]?.tsUnix || 0;
+                          return runReceipt.trace?.map((t: any, i: number) => {
+                            const relativeMs = ((t.tsUnix - baseTs) * 1000);
+                            const relativeStr = relativeMs < 1000
+                              ? `T+${relativeMs}ms`
+                              : `T+${(relativeMs / 1000).toFixed(1)}s`;
+
+                            const stepColor =
+                              t.step === "plan" ? "text-purple-400" :
+                                t.step === "policy" ? "text-blue-400" :
+                                  t.step === "preflight" ? "text-cyan-400" :
+                                    t.step === "pay" ? "text-amber-400" :
+                                      t.step === "execute" ? "text-emerald-400" :
+                                        t.step === "lifecycle" ? "text-gray-400" :
+                                          "text-white";
+
+                            return (
+                              <div
+                                key={i}
+                                className={`p-3 flex gap-3 items-start border-l-2 transition-colors ${!t.ok
+                                    ? "bg-red-500/5 border-red-500"
+                                    : i === 0
+                                      ? "border-purple-500"
+                                      : "border-white/10 hover:bg-white/5"
+                                  }`}
+                              >
+                                <span className="text-gray-600 w-16 shrink-0 font-bold text-right">
+                                  {relativeStr}
+                                </span>
+                                <div className={`w-2 h-2 rounded-full mt-1 shrink-0 ${t.ok ? "bg-emerald-500" : "bg-red-500"}`} />
+                                <span className={`w-20 shrink-0 font-bold uppercase ${stepColor}`}>
+                                  {t.step}
+                                </span>
+                                <span className="text-gray-300 flex-1">{t.message}</span>
+                              </div>
+                            );
+                          });
+                        })()}
                       </div>
                     )}
                     {tab === "json" && (
