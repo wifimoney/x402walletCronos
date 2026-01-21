@@ -3,13 +3,11 @@ export type CronosNetwork = "cronos-testnet" | "cronos-mainnet";
 export type ActionIntent = {
   id: string;                  // unique intent identifier
   createdAt: number;           // unix seconds
-  action: "swap";
+  action: "transfer";
   params: {
-    tokenIn: `0x${string}`;   // USDC.e
-    tokenOut: `0x${string}`;  // WCRO (for now)
-    amountIn: string;         // base units (wei-like string)
-    maxSlippageBps: number;   // e.g. 50 = 0.50%
-    deadline: number;         // unix seconds
+    token: `0x${string}`;   // USDC.e
+    to: `0x${string}`;      // Recipient
+    amount: string;         // base units (wei-like string)
   };
   fee: string;                // USDC.e base units
   sessionExpiry: number;       // unix seconds
@@ -24,12 +22,9 @@ export type PreflightReceipt = {
     rpcUp: boolean;
     latencyMs: { facilitator?: number; rpc?: number };
   };
-  quote?: {
-    expectedOut: string;
-    minOut: string;
-    path: string[];          // The successful path
-    pathUsed: string[];      // Alias for path, for explicit tracking
-    pathsTried: string[][];  // History of paths attempted
+  data?: {
+    balance: string;         // User's balance of token
+    sufficient: boolean;     // balance >= amount
   };
   simulation?: {
     success: boolean;
@@ -68,6 +63,8 @@ export type X402DecodedPaymentHeader = {
 import { RiskAnalysis } from "./risk-constants";
 
 export type RunReceipt = {
+  receiptVersion: "1.0";
+  x402Version: 1;
   intent: ActionIntent;
   policy: { allowed: boolean; rulesTriggered: string[]; reason?: string };
   risk?: RiskAnalysis; // Added RiskAnalysis
@@ -84,10 +81,8 @@ export type RunReceipt = {
     status: "success" | "reverted" | "failed";
     approveTxHash?: string | null;
     links?: { approve?: string | null; swap?: string | null };
-    beforeBalances?: { tokenIn: string; tokenOut: string };
-    afterBalances?: { tokenIn: string; tokenOut: string };
-    balanceDeltas?: { tokenIn: string; tokenOut: string };
-    enforced?: { amountOutMin: string; deadline: number; path: `0x${string}`[] };
+    balanceDeltas?: { token: string };
+    enforced?: { amount: string };
     logsSummary: string[];
     workflowPath?: string[]; // Added workflowPath
   } | null;

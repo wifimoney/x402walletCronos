@@ -15,12 +15,14 @@ function Tabs({
   setTab: (t: "summary" | "trace" | "json") => void;
 }) {
   return (
-    <div className="flex gap-2 text-sm">
+    <div className="flex gap-2 text-sm p-1 bg-black/20 rounded-lg inline-flex border border-white/5">
       {(["summary", "trace", "json"] as const).map((t) => (
         <button
           key={t}
           onClick={() => setTab(t)}
-          className={`px-3 py-1 rounded-full border text-xs font-medium transition-colors ${tab === t ? "bg-white text-black border-white" : "border-gray-700 text-gray-400 hover:text-white"
+          className={`px-4 py-1.5 rounded-md text-xs font-medium transition-all ${tab === t
+            ? "bg-blue-500/20 text-blue-300 border border-blue-500/50 shadow-[0_0_10px_rgba(59,130,246,0.2)]"
+            : "text-gray-500 hover:text-gray-300 hover:bg-white/5 border border-transparent"
             }`}
         >
           {t.toUpperCase()}
@@ -35,7 +37,7 @@ export default function Page() {
   const [wallet, setWallet] = useState<{ address: string; chainId: number } | null>(null);
 
   // --- 2. Run / Input State ---
-  const [prompt, setPrompt] = useState("Swap 10 USDC.e to WCRO");
+  const [prompt, setPrompt] = useState("Transfer 10 USDC.e");
   const [dryRun, setDryRun] = useState(true);
   const [simulateRpcDown, setSimulateRpcDown] = useState(false);
 
@@ -152,6 +154,7 @@ export default function Page() {
       typed.message.from = from;
 
       const signature = await walletClient.signTypedData({
+        account: from,
         domain: typed.domain,
         types: typed.types,
         primaryType: typed.primaryType,
@@ -212,7 +215,7 @@ export default function Page() {
       });
       const [user] = await walletClient.requestAddresses();
 
-      // Prepare deterministic payload (server enforces minOut)
+      // Prepare payload
       const prep = await fetch("/api/prepare", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -229,114 +232,60 @@ export default function Page() {
       const rpc = process.env.NEXT_PUBLIC_CRONOS_RPC_URL || "https://evm-t3.cronos.org";
       const publicClient = createPublicClient({ transport: http(rpc) });
 
-      // Before balances
-      const beforeIn = await publicClient.readContract({
-        address: p.tokenIn,
+      // Before balance (Token)
+      const before = await publicClient.readContract({
+        address: p.token,
         abi: ERC20_ABI,
         functionName: "balanceOf",
         args: [user],
       }) as bigint;
-
-      const beforeOut = await publicClient.readContract({
-        address: p.tokenOut,
-        abi: ERC20_ABI,
-        functionName: "balanceOf",
-        args: [user],
-      }) as bigint;
-
-      // Allowance check
-      const allowance = await publicClient.readContract({
-        address: p.tokenIn,
-        abi: ERC20_ABI,
-        functionName: "allowance",
-        args: [user, p.router],
-      }) as bigint;
-
       let approveTxHash: `0x${string}` | null = null;
+      // Use string[] to allow 'transfer' and other steps without strict literal matching issues
       const workflowPath: string[] = ["preflight", "pay"];
+      workflowPath.push("transfer");
 
-      const amountIn = BigInt(p.amountIn);
-      if (allowance < amountIn) {
-        workflowPath.push("approve");
-        approveTxHash = await walletClient.writeContract({
-          address: p.tokenIn,
-          abi: ERC20_ABI,
-          functionName: "approve",
-          args: [p.router, amountIn],
-          chain: undefined as any,
-          account: user,
-        });
-
-        await publicClient.waitForTransactionReceipt({ hash: approveTxHash });
-      } else {
-        workflowPath.push("approve_skipped");
-      }
-
-      workflowPath.push("swap");
-
-      // Swap
-      const swapTxHash = await walletClient.writeContract({
-        address: p.router,
-        abi: V2_ROUTER_ABI,
-        functionName: "swapExactTokensForTokens",
+      // Transfer
+      const amount = BigInt(p.amount);
+      const txHash = await walletClient.writeContract({
+        address: p.token,
+        abi: ERC20_ABI,
+        functionName: "transfer",
         args: [
-          amountIn,
-          BigInt(p.amountOutMin),
-          p.path,
-          user,
-          BigInt(p.deadline),
+          p.to,
+          amount,
         ],
         chain: undefined as any,
         account: user,
       });
 
-      await publicClient.waitForTransactionReceipt({ hash: swapTxHash });
+      await publicClient.waitForTransactionReceipt({ hash: txHash });
 
-      // After balances
-      const afterIn = await publicClient.readContract({
-        address: p.tokenIn,
-        abi: ERC20_ABI,
-        functionName: "balanceOf",
-        args: [user],
-      }) as bigint;
-
-      const afterOut = await publicClient.readContract({
-        address: p.tokenOut,
+      // After balance
+      const after = await publicClient.readContract({
+        address: p.token,
         abi: ERC20_ABI,
         functionName: "balanceOf",
         args: [user],
       }) as bigint;
 
       const txBase = process.env.NEXT_PUBLIC_EXPLORER_TX_BASE || "";
-      const approveLink = approveTxHash && txBase ? `${txBase}${approveTxHash}` : null;
-      const swapLink = txBase ? `${txBase}${swapTxHash}` : null;
+      const txLink = txBase ? `${txBase}${txHash}` : null;
 
       // Attach to runReceipt (operational receipts)
       const updated = {
         ...runReceipt,
         execution: {
-          txHash: swapTxHash,
+          txHash: txHash,
           status: "success",
-          approveTxHash,
-          links: { approve: approveLink, swap: swapLink },
-          beforeBalances: {
-            tokenIn: beforeIn.toString(),
-            tokenOut: beforeOut.toString(),
-          },
-          afterBalances: {
-            tokenIn: afterIn.toString(),
-            tokenOut: afterOut.toString(),
-          },
+          links: { tx: txLink },
           balanceDeltas: {
-            tokenIn: (afterIn - beforeIn).toString(),
-            tokenOut: (afterOut - beforeOut).toString(),
+            token: (after - before).toString(),
           },
           enforced: {
-            amountOutMin: p.amountOutMin,
-            deadline: p.deadline,
-            path: p.path,
+            amount: p.amount,
           },
           workflowPath,
+          logsSummary: ["Transfer executed successfully"]
         },
       };
 
@@ -368,15 +317,14 @@ export default function Page() {
       preflightOk: runReceipt.preflight?.ok,
       risk: runReceipt.risk,
       quote: {
-        expectedOut: runReceipt.preflight?.quote?.expectedOut ?? null,
-        minOut: runReceipt.preflight?.quote?.minOut ?? null,
+        balance: runReceipt.preflight?.data?.balance ?? null,
+        sufficient: runReceipt.preflight?.data?.sufficient ?? null,
       },
       execution: runReceipt.execution ? {
         txHash: runReceipt.execution.txHash,
         approveTxHash: runReceipt.execution.approveTxHash ?? null,
         links: runReceipt.execution.links,
-        beforeBalances: runReceipt.execution.beforeBalances,
-        afterBalances: runReceipt.execution.afterBalances,
+        balanceDeltas: runReceipt.execution.balanceDeltas,
         enforced: runReceipt.execution.enforced,
         workflowPath: runReceipt.execution.workflowPath,
       } : null,
@@ -385,33 +333,43 @@ export default function Page() {
     : null;
 
   return (
-    <div className="min-h-screen bg-[#111] text-gray-200 p-4">
-      <div className="max-w-7xl mx-auto space-y-6">
+    <div className="min-h-screen p-6 font-sans">
+      <div className="max-w-[1400px] mx-auto space-y-8">
 
         {/* TOP BAR: Header + Connect */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-bold tracking-tight text-white">CronoGuard <span className="text-gray-500 font-normal">Control Tower</span></h1>
-            <p className="text-xs text-gray-500">Guard Agent Execution (x402) · Preflight → Pay → Execute</p>
+        <div className="flex items-center justify-between panel-tech p-4 lg:p-6">
+          <div className="flex items-center gap-4">
+            <div className="w-10 h-10 rounded-full bg-blue-500/20 flex items-center justify-center border border-blue-500/30 shadow-[0_0_15px_rgba(59,130,246,0.3)]">
+              <span className="text-xl">🛡️</span>
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold tracking-tight text-white text-glow">CronoGuard <span className="text-blue-400 font-light">Control Tower</span></h1>
+              <p className="text-xs text-blue-300/60 uppercase tracking-widest font-mono">Agentic Execution Environment</p>
+            </div>
           </div>
           <ConnectBar onAccount={setWallet} />
         </div>
-
 
         {/* MAIN LAYOUT: 2 Columns */}
         <div className="grid grid-cols-12 gap-6 items-start">
 
           {/* LEFT COLUMN: Controls + History (4 cols) */}
-          <div className="col-span-12 md:col-span-4 space-y-4">
+          <div className="col-span-12 lg:col-span-4 space-y-6">
 
             {/* 1. Control Panel */}
-            <div className="panel p-4 space-y-4">
-              <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider">New Action</h2>
+            <div className="panel-tech p-5 space-y-5">
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-bold text-blue-300 uppercase tracking-wider flex items-center gap-2">
+                  <span className="w-1.5 h-1.5 bg-blue-500 rounded-full shadow-[0_0_8px_#3b82f6]"></span>
+                  New Action
+                </h2>
+                <span className="text-[10px] text-gray-500 font-mono border border-gray-800 px-1.5 rounded">v1.0</span>
+              </div>
 
-              <div className="space-y-1">
-                <label className="text-xs text-gray-500">Prompt</label>
+              <div className="space-y-2">
+                <label className="text-xs text-gray-400 font-medium ml-1">Prompt</label>
                 <textarea
-                  className="w-full bg-black/40 border border-gray-800 rounded-lg p-3 text-sm focus:border-blue-500 outline-none transition-colors"
+                  className="w-full input-tech rounded-lg p-4 text-sm min-h-[100px] font-mono shadow-inner"
                   rows={3}
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
@@ -419,38 +377,53 @@ export default function Page() {
                 />
               </div>
 
-              <div className="flex items-center gap-3">
+              <div className="pt-2">
                 <button
-                  className={`flex-1 py-2 rounded-lg text-sm font-medium border transition-all ${loading ? "opacity-50" : "bg-blue-600 border-blue-500 text-white hover:bg-blue-500"
+                  className={`w-full py-3 rounded-lg text-sm font-bold tracking-wide uppercase transition-all ${loading
+                    ? "bg-gray-800 text-gray-500 cursor-not-allowed border border-gray-700"
+                    : "btn-tech-primary"
                     }`}
                   onClick={() => runPlanAndPreflight()}
                   disabled={loading}
                 >
-                  {loading ? "..." : "1. Run Preflight"}
+                  {loading ? (
+                    <span className="flex items-center justify-center gap-2">
+                      <span className="animate-spin text-lg">⟳</span> Processing...
+                    </span>
+                  ) : "1. Run Preflight"}
                 </button>
               </div>
 
-              <div className="flex items-center justify-between text-xs text-gray-500 pt-2 border-t border-gray-800">
-                <label className="flex items-center gap-2 cursor-pointer hover:text-gray-300">
-                  <input type="checkbox" checked={dryRun} onChange={e => setDryRun(e.target.checked)} />
-                  Dry Run
+              <div className="flex items-center justify-between text-xs text-gray-500 pt-3 border-t border-white/5">
+                <label className="flex items-center gap-2 cursor-pointer hover:text-blue-300 transition-colors">
+                  <div className={`w-3 h-3 border rounded-sm flex items-center justify-center ${dryRun ? 'bg-blue-500/20 border-blue-500' : 'border-gray-600'}`}>
+                    {dryRun && <span className="text-[8px] text-blue-400">✓</span>}
+                  </div>
+                  <input type="checkbox" className="hidden" checked={dryRun} onChange={e => setDryRun(e.target.checked)} />
+                  Dry Run Mode
                 </label>
-                <label className="flex items-center gap-2 cursor-pointer hover:text-gray-300">
-                  <input type="checkbox" checked={simulateRpcDown} onChange={e => setSimulateRpcDown(e.target.checked)} />
-                  Simulate RPC Fail
+                <label className="flex items-center gap-2 cursor-pointer hover:text-red-300 transition-colors">
+                  <div className={`w-3 h-3 border rounded-sm flex items-center justify-center ${simulateRpcDown ? 'bg-red-500/20 border-red-500' : 'border-gray-600'}`}>
+                    {simulateRpcDown && <span className="text-[8px] text-red-400">✓</span>}
+                  </div>
+                  <input type="checkbox" className="hidden" checked={simulateRpcDown} onChange={e => setSimulateRpcDown(e.target.checked)} />
+                  Simulate Fail
                 </label>
               </div>
             </div>
 
             {/* 2. Runs List */}
-            <div className="panel p-0 overflow-hidden">
-              <div className="p-3 border-b border-gray-800 bg-black/20 flex justify-between items-center">
-                <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider">History</h2>
-                <span className="text-xs text-gray-600">{runs.length} runs</span>
+            <div className="panel-tech p-0 overflow-hidden flex flex-col max-h-[600px]">
+              <div className="p-4 border-b border-white/5 bg-black/20 flex justify-between items-center backdrop-blur-md">
+                <h2 className="text-sm font-bold text-gray-400 uppercase tracking-wider">History Log</h2>
+                <span className="text-[10px] bg-white/5 px-2 py-0.5 rounded-full text-gray-500 font-mono">{runs.length}</span>
               </div>
-              <div className="max-h-[500px] overflow-y-auto">
+              <div className="overflow-y-auto flex-1 p-2 space-y-1 custom-scrollbar">
                 {runs.length === 0 && (
-                  <div className="p-8 text-center text-xs text-gray-600 italic">No runs yet</div>
+                  <div className="p-8 text-center flex flex-col items-center gap-2 text-gray-600">
+                    <span className="text-2xl opacity-20">📜</span>
+                    <span className="text-xs italic">No execution history found</span>
+                  </div>
                 )}
                 {runs.map((r, i) => {
                   const rid = r.intent?.id;
@@ -461,33 +434,38 @@ export default function Page() {
                       : r.preflight?.ok ? 'READY'
                         : 'FAILED';
 
+                  // Status Colors
+                  const statusColor = status === 'EXECUTED' ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20' :
+                    status === 'FAILED' ? 'text-red-400 bg-red-500/10 border-red-500/20' :
+                      status === 'PAID' ? 'text-amber-400 bg-amber-500/10 border-amber-500/20' :
+                        'text-blue-400 bg-blue-500/10 border-blue-500/20';
+
                   return (
                     <div
                       key={rid || i}
                       onClick={() => setRunReceipt(r)}
-                      className={`p-3 border-b border-gray-800 cursor-pointer hover:bg-white/5 transition-colors ${isActive ? "bg-white/5 border-l-2 border-l-blue-500" : "border-l-2 border-l-transparent"}`}
+                      className={`p-3 rounded-lg border cursor-pointer transition-all group ${isActive
+                        ? "bg-white/5 border-blue-500/30 shadow-[inset_0_0_10px_rgba(59,130,246,0.1)]"
+                        : "bg-transparent border-transparent hover:bg-white/5 hover:border-white/10"
+                        }`}
                     >
-                      <div className="flex justify-between items-start mb-1">
-                        <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${status === 'EXECUTED' ? 'bg-green-900/30 text-green-400' :
-                            status === 'FAILED' ? 'bg-red-900/30 text-red-400' :
-                              'bg-blue-900/30 text-blue-400'
-                          }`}>{status}</span>
-                        <span className="text-[10px] text-gray-500 font-mono">
+                      <div className="flex justify-between items-start mb-2">
+                        <span className={`text-[9px] px-1.5 py-px rounded border font-mono font-bold tracking-tight ${statusColor}`}>{status}</span>
+                        <span className="text-[9px] text-gray-600 font-mono group-hover:text-gray-400 transition-colors">
                           {rid?.slice(0, 8)}
                         </span>
                       </div>
-                      <div className="text-xs text-gray-300 line-clamp-2 mb-2 opacity-80">
-                        {((r.intent as any)?.params?.tokenIn) ?
-                          `Swap ${(r.intent as any).params.amountIn} to ${(r.intent as any).params.tokenOut}`
+                      <div className="text-xs text-gray-300 line-clamp-1 mb-2 font-medium opacity-90 truncate">
+                        {((r.intent as any)?.params?.token) ?
+                          `Transfer ${(r.intent as any).params.amount} USDC.e`
                           : "Unknown Intent"}
                       </div>
                       <div className="flex items-center gap-2">
-                        {/* Risk Dot */}
-                        <div className={`flex items-center gap-1 text-[10px] ${rRisk > 50 ? 'text-red-400' : rRisk > 20 ? 'text-yellow-400' : 'text-green-400'
+                        <div className={`flex items-center gap-1.5 text-[9px] font-bold ${rRisk > 50 ? 'text-red-400' : rRisk > 20 ? 'text-amber-400' : 'text-emerald-400'
                           }`}>
-                          <div className={`w-1.5 h-1.5 rounded-full ${rRisk > 50 ? 'bg-red-500' : rRisk > 20 ? 'bg-yellow-500' : 'bg-green-500'
+                          <div className={`w-1 h-1 rounded-full shadow-[0_0_5px_currentColor] ${rRisk > 50 ? 'bg-red-500' : rRisk > 20 ? 'bg-amber-500' : 'bg-emerald-500'
                             }`} />
-                          Risk {rRisk}
+                          RISK {rRisk}
                         </div>
                       </div>
                     </div>
@@ -499,103 +477,156 @@ export default function Page() {
           </div>
 
           {/* RIGHT COLUMN: Details (8 cols) */}
-          <div className="col-span-12 md:col-span-8 space-y-4">
+          <div className="col-span-12 lg:col-span-8 space-y-6">
 
             {err && (
-              <div className="p-3 bg-red-900/20 border border-red-800/50 rounded-xl text-red-200 text-xs font-mono">
-                {err}
+              <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl flex items-start gap-4 animate-in fade-in slide-in-from-top-2">
+                <span className="text-xl">⚠️</span>
+                <div>
+                  <h3 className="text-red-400 font-bold text-sm mb-1">Execution Error</h3>
+                  <p className="text-red-200/80 text-xs font-mono">{err}</p>
+                </div>
               </div>
             )}
 
             {runReceipt ? (
               <>
                 {/* Action Bar for Selected Run */}
-                <div className="panel p-4 flex flex-wrap items-center gap-4 justify-between bg-black/40">
+                <div className="panel-tech p-5 flex flex-wrap items-center gap-4 justify-between relative overflow-hidden">
+                  <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500/0 via-blue-500/50 to-blue-500/0 opacity-20"></div>
 
-                  <div className="flex items-center gap-4">
-                    <div className="text-sm font-medium text-gray-300">
-                      Intent <span className="font-mono text-gray-500">{intentId?.slice(0, 8)}...</span>
+                  <div className="flex items-center gap-6">
+                    <div>
+                      <div className="text-[10px] text-gray-500 uppercase tracking-widest font-bold mb-0.5">Intent ID</div>
+                      <div className="text-sm font-mono text-blue-200">{intentId?.slice(0, 12)}...</div>
                     </div>
                     {/* Risk Badge Big */}
                     {runReceipt.risk && (
-                      <div className={`px-2 py-1 rounded text-xs font-bold border ${runReceipt.risk.score > 50 ? 'bg-red-900/20 border-red-800 text-red-400' :
-                          runReceipt.risk.score > 20 ? 'bg-yellow-900/20 border-yellow-800 text-yellow-400' :
-                            'bg-green-900/20 border-green-800 text-green-400'
+                      <div className={`px-3 py-1.5 rounded-md border flex flex-col items-center ${runReceipt.risk.score > 50 ? 'bg-red-500/10 border-red-500/30' :
+                        runReceipt.risk.score > 20 ? 'bg-amber-500/10 border-amber-500/30' :
+                          'bg-emerald-500/10 border-emerald-500/30'
                         }`}>
-                        RISK SCORE: {runReceipt.risk.score}
+                        <span className={`text-[9px] font-bold uppercase tracking-wider opacity-70 ${runReceipt.risk.score > 50 ? 'text-red-300' : runReceipt.risk.score > 20 ? 'text-amber-300' : 'text-emerald-300'
+                          }`}>Risk Score</span>
+                        <span className={`text-lg font-bold leading-none ${runReceipt.risk.score > 50 ? 'text-red-400' : runReceipt.risk.score > 20 ? 'text-amber-400' : 'text-emerald-400 text-glow'
+                          }`}>{runReceipt.risk.score}</span>
                       </div>
                     )}
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-3">
                     {/* Step 2: Pay */}
                     <button
                       onClick={payAgentFee}
                       disabled={loading || !canPay || isPaid}
-                      className={`px-4 py-2 rounded-lg text-xs font-medium border transition-all ${isPaid ? "bg-green-900/20 border-green-800 text-green-400 opacity-50 cursor-default" :
-                          canPay ? "bg-black hover:bg-gray-900 border-gray-600 text-white" :
-                            "bg-transparent border-gray-800 text-gray-600 cursor-not-allowed"
+                      className={`px-5 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wide border transition-all flex items-center gap-2 ${isPaid ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400 cursor-default" :
+                        canPay ? "btn-tech-outline" :
+                          "border-gray-800 text-gray-700 cursor-not-allowed"
                         }`}
                     >
-                      {loading ? "..." : isPaid ? "2. Paid ✅" : "2. Pay (x402)"}
+                      {isPaid ? (
+                        <><span>Sent</span> <span className="text-lg">✓</span></>
+                      ) : loading ? "..." : "2. Pay (x402)"}
                     </button>
 
                     {/* Step 3: Execute */}
                     <button
                       onClick={executeOnChain}
                       disabled={loading || !canExecute}
-                      className={`px-4 py-2 rounded-lg text-xs font-medium border transition-all ${canExecute ? "bg-blue-600 border-blue-500 text-white hover:bg-blue-500 shadow-lg shadow-blue-900/20" :
-                          "bg-transparent border-gray-800 text-gray-600 cursor-not-allowed"
+                      className={`px-6 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wide transition-all shadow-lg ${canExecute ? "btn-tech-primary shadow-blue-900/40" :
+                        "bg-gray-900 border border-gray-800 text-gray-600 cursor-not-allowed"
                         }`}
                     >
-                      {loading ? "Executing..." : "3. Execute Swap"}
+                      {loading ? "Executing..." : "3. Execute Transfer"}
                     </button>
                   </div>
                 </div>
 
                 {/* Tabs & Content */}
-                <div className="panel p-0 overflow-hidden min-h-[400px]">
-                  <div className="border-b border-gray-800 bg-black/20 p-3 flex justify-between items-center">
+                <div className="panel-tech p-0 overflow-hidden min-h-[500px] flex flex-col">
+                  <div className="border-b border-white/5 bg-black/40 p-3 flex justify-between items-center backdrop-blur-3xl">
                     <Tabs tab={tab} setTab={setTab} />
-                    <button
-                      className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
-                      onClick={() => {
-                        const blob = new Blob([JSON.stringify(runReceipt, null, 2)], { type: "application/json" });
-                        const url = URL.createObjectURL(blob);
-                        const a = document.createElement("a");
-                        a.href = url;
-                        a.download = `receipt-${intentId || "unknown"}.json`;
-                        a.click();
-                      }}
-                    >
-                      Download JSON
-                    </button>
+                    <div className="flex gap-2">
+                      <button
+                        className="text-[10px] text-blue-400 hover:text-blue-300 transition-colors uppercase tracking-wider font-bold flex items-center gap-1"
+                        onClick={() => {
+                          const r = runReceipt;
+                          if (r && r.intent.params.amount) {
+                            setPrompt(`Transfer ${r.intent.params.amount} USDC.e`);
+                          }
+                        }}
+                      >
+                        <span>Replay</span> <span className="text-lg">↺</span>
+                      </button>
+                      <button
+                        className="text-[10px] text-blue-400 hover:text-blue-300 transition-colors uppercase tracking-wider font-bold flex items-center gap-1"
+                        onClick={() => {
+                          const blob = new Blob([runs.map(r => JSON.stringify(r)).join('\n')], { type: "application/x-ndjson" });
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement("a");
+                          a.href = url;
+                          a.download = `runs-${new Date().toISOString()}.ndjson`;
+                          a.click();
+                        }}
+                      >
+                        <span>NDJSON</span> <span className="text-lg">⇲</span>
+                      </button>
+                      <button
+                        className="text-[10px] text-blue-400 hover:text-blue-300 transition-colors uppercase tracking-wider font-bold flex items-center gap-1"
+                        onClick={() => {
+                          const blob = new Blob([runs.map(r => JSON.stringify(r)).join('\n')], { type: "application/x-ndjson" });
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement("a");
+                          a.href = url;
+                          a.download = `runs-${new Date().toISOString()}.ndjson`;
+                          a.click();
+                        }}
+                      >
+                        <span>Export NDJSON</span> <span className="text-lg">⇲</span>
+                      </button>
+                      <button
+                        className="text-[10px] text-blue-400 hover:text-blue-300 transition-colors uppercase tracking-wider font-bold flex items-center gap-1"
+                        onClick={() => {
+                          const blob = new Blob([JSON.stringify(runReceipt, null, 2)], { type: "application/json" });
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement("a");
+                          a.href = url;
+                          a.download = `receipt-${intentId}.json`;
+                          a.click();
+                        }}
+                      >
+                        <span>JSON</span> <span className="text-lg">⇩</span>
+                      </button>
+                    </div>
                   </div>
 
-                  <div className="p-0">
+                  <div className="bg-black/20 flex-1 relative">
+                    {/* Tech Grid Background overlay for content */}
+                    <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-5 pointer-events-none"></div>
+
                     {tab === "summary" && (
-                      <div className="p-4 font-mono text-xs text-gray-300 whitespace-pre-wrap overflow-auto max-h-[500px]">
+                      <div className="p-6 font-mono text-xs text-blue-100/80 whitespace-pre-wrap overflow-auto max-h-[500px]">
                         {JSON.stringify(summary, null, 2)}
                       </div>
                     )}
                     {tab === "trace" && (
-                      <div className="font-mono text-xs">
+                      <div className="font-mono text-xs divide-y divide-white/5">
                         {runReceipt.trace?.map((t: any, i: number) => (
-                          <div key={i} className={`p-2 border-b border-gray-800/50 flex gap-3 ${!t.ok ? "bg-red-900/10" : "hover:bg-white/5"
-                            }`}>
-                            <span className="text-gray-600 w-24 shrink-0">
+                          <div key={i} className={`p-4 flex gap-4 items-center group transition-colors ${!t.ok ? "bg-red-500/5" : "hover:bg-white/5"}`}>
+                            <span className="text-gray-500 w-24 shrink-0 font-medium opacity-60">
                               {new Date(t.tsUnix * 1000).toLocaleTimeString()}
                             </span>
-                            <span className={`w-20 shrink-0 font-bold ${t.ok ? "text-green-500" : "text-red-500"}`}>
-                              {t.step.toUpperCase()}
+                            <div className={`w-2 h-2 rounded-full shrink-0 ${t.ok ? "bg-emerald-500 shadow-[0_0_8px_#10b981]" : "bg-red-500 shadow-[0_0_8px_#ef4444]"}`}></div>
+                            <span className={`w-24 shrink-0 font-bold tracking-tight uppercase ${t.ok ? "text-emerald-400" : "text-red-400"}`}>
+                              {t.step}
                             </span>
-                            <span className="text-gray-300">{t.message}</span>
+                            <span className="text-gray-300 opacity-90">{t.message}</span>
                           </div>
                         ))}
                       </div>
                     )}
                     {tab === "json" && (
-                      <div className="p-4 font-mono text-xs text-gray-400 whitespace-pre-wrap overflow-auto max-h-[500px]">
+                      <div className="p-6 font-mono text-[10px] leading-relaxed text-gray-400 whitespace-pre-wrap overflow-auto max-h-[500px]">
                         {JSON.stringify(runReceipt, null, 2)}
                       </div>
                     )}
@@ -603,11 +634,15 @@ export default function Page() {
                 </div>
               </>
             ) : (
-              <div className="panel p-12 flex flex-col items-center justify-center text-gray-600 space-y-4">
-                <div className="w-16 h-16 rounded-full bg-gray-900 flex items-center justify-center text-2xl">
-                  ⚡️
+              <div className="panel-tech p-12 flex flex-col items-center justify-center text-center space-y-6 min-h-[400px]">
+                <div className="w-24 h-24 rounded-full bg-blue-500/5 border border-blue-500/20 flex items-center justify-center relative">
+                  <div className="absolute inset-0 rounded-full animate-ping bg-blue-500/10 delay-1000 duration-3000"></div>
+                  <span className="text-4xl filter drop-shadow-[0_0_10px_rgba(59,130,246,0.5)]">⚡️</span>
                 </div>
-                <p>Select a run or create a new one to see details.</p>
+                <div>
+                  <h3 className="text-lg font-bold text-white mb-2">Ready for Action</h3>
+                  <p className="text-sm text-gray-500 max-w-xs mx-auto">Select a run from the history or define a new intent to start the guarded execution flow.</p>
+                </div>
               </div>
             )}
 

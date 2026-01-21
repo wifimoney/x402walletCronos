@@ -1,8 +1,23 @@
 @import "tailwindcss";
 
 :root {
-  --background: #111;
+  /* Deep Navy/Void Background */
+  --background: #050510;
   --foreground: #ededed;
+
+  /* Tech Accents */
+  --tech-primary: #3b82f6;
+  /* Bright Blue */
+  --tech-success: #10b981;
+  /* Emerald Green */
+  --tech-warning: #f59e0b;
+  /* Amber */
+  --tech-danger: #ef4444;
+  /* Red */
+
+  /* Surfaces */
+  --surface-glass: rgba(20, 30, 50, 0.4);
+  --border-glass: rgba(59, 130, 246, 0.2);
 }
 
 @theme inline {
@@ -14,14 +29,68 @@
 
 body {
   background: var(--background);
+  background-image:
+    radial-gradient(circle at 50% 0%, rgba(59, 130, 246, 0.15), transparent 40%),
+    radial-gradient(circle at 0% 100%, rgba(16, 185, 129, 0.05), transparent 40%);
   color: var(--foreground);
   font-family: var(--font-sans), system-ui, sans-serif;
   min-height: 100vh;
 }
 
-.panel {
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid #333;
-    border-radius: 12px;
+/* --- Tech Utilities --- */
+
+.panel-tech {
+  background: var(--surface-glass);
+  border: 1px solid var(--border-glass);
+  backdrop-filter: blur(12px);
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
 }
 
+.text-glow {
+  text-shadow: 0 0 20px rgba(59, 130, 246, 0.5);
+}
+
+/* Primary Button */
+.btn-tech-primary {
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.2), rgba(59, 130, 246, 0.1));
+  border: 1px solid rgba(59, 130, 246, 0.5);
+  color: #93c5fd;
+  transition: all 0.2s ease;
+  text-shadow: 0 0 10px rgba(59, 130, 246, 0.5);
+}
+
+.btn-tech-primary:hover:not(:disabled) {
+  background: rgba(59, 130, 246, 0.3);
+  border-color: #3b82f6;
+  color: white;
+  box-shadow: 0 0 15px rgba(59, 130, 246, 0.3);
+}
+
+/* Secondary/Outline Button */
+.btn-tech-outline {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #9ca3af;
+  transition: all 0.2s ease;
+}
+
+.btn-tech-outline:hover:not(:disabled) {
+  border-color: rgba(255, 255, 255, 0.3);
+  color: white;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+/* Inputs */
+.input-tech {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: white;
+  transition: border-color 0.2s;
+}
+
+.input-tech:focus {
+  border-color: var(--tech-primary);
+  outline: none;
+  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.3);
+}

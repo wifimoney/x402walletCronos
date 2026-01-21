@@ -25,6 +25,8 @@ export function buildRunReceipt(args: {
   trace: RunReceipt["trace"];
 }): RunReceipt {
   return {
+    receiptVersion: "1.0",
+    x402Version: 1,
     intent: args.intent as any,
     policy: args.policy as any,
     risk: args.risk,

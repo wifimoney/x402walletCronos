@@ -1,5 +1,5 @@
 import { nanoid } from "nanoid";
-import { CRONOS_NETWORK, USDC_E, WCRO, ROUTER_ADDRESS } from "./constants";
+import { CRONOS_NETWORK, USDC_E } from "./constants";
 import type { ActionIntent } from "./types";
 
 function toBaseUnits(amount: number, decimals: number) {
@@ -15,32 +15,35 @@ export function buildIntent(opts: {
 }): ActionIntent {
   const now = Math.floor(Date.now() / 1000);
 
-  // MVP parse: "Swap 10 USDC.e to CRO"
+  // MVP parse: "Transfer 10 USDC.e"
   // Extract first number; fallback to 10.
   const m = opts.prompt.match(/(\d+(\.\d+)?)/);
-  const amount = m ? Number(m[1]) : 10;
+  const amountVal = m ? Number(m[1]) : 10;
 
   // USDC.e is 6 decimals
-  const amountIn = toBaseUnits(amount, 6);
+  const amount = toBaseUnits(amountVal, 6);
 
-  const tokenIn = USDC_E[CRONOS_NETWORK];
-  const tokenOut = WCRO[CRONOS_NETWORK]; // may be 0x0 on testnet until you set it
+  const token = USDC_E[CRONOS_NETWORK];
+
+  // Default to self/burner if not specified (for demo reliability)
+  // In a real app, recipient comes from prompt or state.
+  // Here we default to a known testnet "safe" address or the caller's address if passed in opts.
+  const to = opts.recipient && opts.recipient !== ("0x" + "0".repeat(40))
+    ? opts.recipient
+    : "0x0000000000000000000000000000000000000000"; //Burner for test, or could be another wallet
 
   const fee = toBaseUnits(1, 6); // 1 USDC.e agent fee
-  const maxSlippageBps = 50; // 0.50%
 
   return {
     id: nanoid(10),
     createdAt: now,
-    action: "swap",
+    action: "transfer",
     params: {
-      tokenIn,
-      tokenOut,
-      amountIn,
-      maxSlippageBps,
-      deadline: now + 60,
+      token,
+      to,
+      amount,
     },
     fee,
-    sessionExpiry: now + 60,
+    sessionExpiry: now + 300, // 5 mins
   };
 }

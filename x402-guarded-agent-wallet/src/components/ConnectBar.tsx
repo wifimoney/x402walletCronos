@@ -102,38 +102,49 @@ export default function ConnectBar({
     }, []);
 
     return (
-        <div className="flex items-center justify-between p-3 border border-gray-800 rounded-xl bg-black/40">
+        <div className="flex items-center gap-4 bg-black/40 border border-white/5 px-4 py-2 rounded-lg backdrop-blur-sm">
             <div>
-                <div className="font-bold text-sm">Wallet</div>
-                <div className="opacity-80 text-xs">
+                <div className="text-[10px] uppercase tracking-widest text-gray-500 font-bold mb-0.5">Wallet Status</div>
+                <div className="text-xs font-mono">
                     {address ? (
-                        <span className="flex items-center gap-1">
-                            {shortAddr(address)} · Chain {chainId} {isCronosTestnet ? "✅" : "⚠️"}
-                        </span>
+                        <div className="flex items-center gap-2">
+                            <span className="text-blue-200">{shortAddr(address)}</span>
+                            <span className="text-gray-600">|</span>
+                            <span className={`flex items-center gap-1.5 ${isCronosTestnet ? "text-emerald-400" : "text-amber-400"}`}>
+                                Chain {chainId} {isCronosTestnet ? (
+                                    <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full shadow-[0_0_5px_#10b981]"></span>
+                                ) : (
+                                    <span className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-pulse shadow-[0_0_5px_#f59e0b]"></span>
+                                )}
+                            </span>
+                        </div>
                     ) : (
-                        "Not connected"
+                        <span className="text-gray-500 italic">Not connected</span>
                     )}
                 </div>
-                {err && <div className="text-red-400 text-xs mt-1">{err}</div>}
+                {err && <div className="text-red-400 text-[10px] mt-1 truncate max-w-[200px]">{err}</div>}
             </div>
 
             <div className="flex gap-2">
                 {!address ? (
-                    <button onClick={connect} className="px-3 py-2 rounded-lg border border-gray-700 hover:bg-white/10 text-xs">
+                    <button onClick={connect} className="px-4 py-1.5 rounded border border-white/20 hover:border-blue-400 hover:bg-blue-500/10 hover:text-blue-300 text-xs font-bold uppercase tracking-wide transition-all">
                         Connect
                     </button>
                 ) : (
-                    <button onClick={refresh} className="px-3 py-2 rounded-lg border border-gray-700 hover:bg-white/10 text-xs">
-                        Refresh
+                    <button onClick={refresh} className="p-1.5 rounded border border-white/10 hover:bg-white/5 text-gray-500 hover:text-white transition-colors" title="Refresh">
+                        <span className="text-xs">⟳</span>
                     </button>
                 )}
 
                 <button
                     onClick={switchToCronosTestnet}
                     disabled={!address || isCronosTestnet}
-                    className={`px-3 py-2 rounded-lg border border-gray-700 text-xs ${!address || isCronosTestnet ? "opacity-50 cursor-not-allowed" : "hover:bg-white/10"}`}
+                    className={`px-3 py-1.5 rounded border text-[10px] uppercase font-bold tracking-wide transition-all ${!address || isCronosTestnet
+                            ? "border-transparent text-gray-700 cursor-not-allowed"
+                            : "border-amber-500/50 text-amber-500 hover:bg-amber-500/10 hover:border-amber-400 shadow-[0_0_10px_rgba(245,158,11,0.1)]"
+                        }`}
                 >
-                    Switch to Testnet
+                    {isCronosTestnet ? "Testnet Active" : "Switch Network"}
                 </button>
             </div>
         </div>
