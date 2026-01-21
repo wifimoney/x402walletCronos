@@ -1,5 +1,5 @@
 import { nanoid } from "nanoid";
-import { CRONOS_NETWORK, USDC_E } from "./constants";
+import { CRONOS_NETWORK, USDC_E, SELLER_ADDRESS } from "./constants";
 import type { ActionIntent } from "./types";
 
 function toBaseUnits(amount: number, decimals: number) {
@@ -25,12 +25,11 @@ export function buildIntent(opts: {
 
   const token = USDC_E[CRONOS_NETWORK];
 
-  // Default to self/burner if not specified (for demo reliability)
+  // Default to SELLER_ADDRESS for demo reliability (avoids DENY_recipient_zero policy).
   // In a real app, recipient comes from prompt or state.
-  // Here we default to a known testnet "safe" address or the caller's address if passed in opts.
   const to = opts.recipient && opts.recipient !== ("0x" + "0".repeat(40))
     ? opts.recipient
-    : "0x0000000000000000000000000000000000000000"; //Burner for test, or could be another wallet
+    : SELLER_ADDRESS; // Default to seller/operator address for demo
 
   const fee = toBaseUnits(1, 6); // 1 USDC.e agent fee
 
