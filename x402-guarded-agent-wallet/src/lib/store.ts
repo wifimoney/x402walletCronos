@@ -28,3 +28,14 @@ export function markExecuted(intentId: string) {
 export function isExecuted(intentId: string) {
   return executedByIntent.has(intentId);
 }
+
+// Idempotency storage: map idempotencyKey -> RunReceipt
+const runByIdempotencyKey = new Map<string, any>();
+
+export function storeRunByIdempotencyKey(idempotencyKey: string, receipt: any) {
+  runByIdempotencyKey.set(idempotencyKey, receipt);
+}
+
+export function getRunByIdempotencyKey(idempotencyKey: string): any | null {
+  return runByIdempotencyKey.get(idempotencyKey) ?? null;
+}

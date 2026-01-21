@@ -9,6 +9,9 @@ import ConnectBar from "@/components/ConnectBar";
 import StepTimeline from "@/components/StepTimeline";
 import CostBox from "@/components/CostBox";
 import RecipientSelector from "@/components/RecipientSelector";
+import SupportTicket from "@/components/SupportTicket";
+import ReconcileButton from "@/components/ReconcileButton";
+import { FileImporter } from "@/components/FileImporter";
 
 // Default seller address (could be env var)
 const DEFAULT_SELLER = "0x5077eDDBCEA8692E81338aDC922ACF1A47699885";
@@ -73,6 +76,7 @@ export default function Page() {
 
   const [tab, setTab] = useState<"summary" | "trace" | "json">("summary");
   const [historyFilter, setHistoryFilter] = useState<"all" | "failed" | "executed" | "dryrun">("all");
+  const [validationResult, setValidationResult] = useState<{ valid: boolean; errors: string[] } | null>(null);
 
   // Load from local storage
   useEffect(() => {
@@ -283,20 +287,46 @@ export default function Page() {
       workflowPath.push("transfer");
 
       // Transfer
-      const amount = BigInt(transferAmount);
-      const txHash = await walletClient.writeContract({
+      // 3a. Simulation Guard (prevent revert on-chain)
+      try {
+        await publicClient.simulateContract({
+          address: tokenAddress,
+          account: user,
+          abi: ERC20_ABI,
+          functionName: "transfer",
+          args: [recipientAddress, BigInt(transferAmount)],
+        });
+      } catch (simErr: any) {
+        console.error("Simulation failed:", simErr);
+        throw new Error(`Simulation failed: ${simErr?.shortMessage || simErr?.message || "Contract would revert"}`);
+      }
+
+      // 3b. Execute
+      const hash = await walletClient.writeContract({
         address: tokenAddress,
-        abi: ERC20_ABI,
-        functionName: "transfer",
-        args: [
-          recipientAddress,
-          amount,
-        ],
         chain: cronosTestnet,
         account: user,
+        abi: ERC20_ABI,
+        functionName: "transfer",
+        args: [recipientAddress, BigInt(transferAmount)],
       });
 
-      await publicClient.waitForTransactionReceipt({ hash: txHash });
+      const txHash = hash;
+
+      /* Update UI to Pending immediately */
+      const pendingUpdate = {
+        ...runReceipt,
+        execution: {
+          txHash,
+          status: "pending", // Wait for receipt
+          links: { tx: process.env.NEXT_PUBLIC_EXPLORER_TX_BASE ? `${process.env.NEXT_PUBLIC_EXPLORER_TX_BASE}${txHash}` : null },
+          logsSummary: [`Transaction submitted: ${txHash.slice(0, 10)}...`, "Waiting for confirmation..."]
+        }
+      };
+      setRunReceipt(pendingUpdate);
+
+      // Wait for confirmation
+      const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
 
       // After balance (sender)
       const after = await publicClient.readContract({
@@ -320,16 +350,20 @@ export default function Page() {
       const txBase = process.env.NEXT_PUBLIC_EXPLORER_TX_BASE || "";
       const txLink = txBase ? `${txBase}${txHash}` : null;
 
+      // Check strict status
+      const isSuccess = receipt.status === "success";
+      const finalStatus = isSuccess ? "success" : "reverted";
+
       // Attach to runReceipt (operational receipts)
       const updated = {
         ...runReceipt,
         execution: {
           txHash: txHash,
-          status: "success",
+          status: finalStatus,
           links: { tx: txLink },
           balanceDeltas: {
             sender: (after - before).toString(),
-            recipient: `+${amount.toString()}`,
+            recipient: `+${transferAmount}`,
           },
           enforced: {
             amount: transferAmount,
@@ -337,7 +371,7 @@ export default function Page() {
           workflowPath,
           logsSummary: [
             `Submitted transfer tx ${txHash.slice(0, 10)}...`,
-            `Confirmed success. Sender delta: ${(after - before).toString()}, Recipient: +${amount.toString()}`
+            isSuccess ? `Confirmed success. Sender delta: ${(after - before).toString()}` : "Transaction REVERTED on-chain."
           ]
         },
       };
@@ -478,7 +512,22 @@ export default function Page() {
                   amount={runReceipt.intent?.params?.amount || "0"}
                   fee={runReceipt.intent?.fee || "0"}
                   balance={runReceipt.preflight?.data?.balance || "0"}
+                  sufficientForTotal={runReceipt.preflight?.data?.sufficientForTotal ?? true}
                 />
+              )}
+
+              {/* Preflight Changes Diff */}
+              {runReceipt?.preflight?.changes && runReceipt.preflight.changes.length > 0 && (
+                <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3 space-y-1 animate-in fade-in slide-in-from-top-2">
+                  <div className="text-[10px] uppercase font-bold text-blue-400 flex items-center gap-2">
+                    <span className="text-sm">🔍</span> What Changed?
+                  </div>
+                  {runReceipt.preflight.changes.map((change: string, i: number) => (
+                    <div key={i} className="text-xs text-blue-200/80 font-mono pl-4 border-l border-blue-500/30">
+                      {change}
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
 
@@ -487,7 +536,23 @@ export default function Page() {
               <div className="p-3 border-b border-white/5 bg-black/20 backdrop-blur-md">
                 <div className="flex justify-between items-center mb-2">
                   <h2 className="text-sm font-bold text-gray-400 uppercase tracking-wider">Ops Log</h2>
-                  <span className="text-[10px] bg-white/5 px-2 py-0.5 rounded-full text-gray-500 font-mono">{runs.length}</span>
+                  <div className="flex items-center gap-2">
+                    <ReconcileButton runs={runs} setRuns={setRuns} />
+                    <FileImporter onImport={(imported) => {
+                      setRuns(prev => {
+                        const existingIds = new Set(prev.map(r => r.intent?.id));
+                        const existingKeys = new Set(prev.map(r => r.idempotencyKey).filter(Boolean));
+                        const unique = imported.filter(r => {
+                          if (!r.intent?.id) return false;
+                          if (existingIds.has(r.intent.id)) return false;
+                          if (r.idempotencyKey && existingKeys.has(r.idempotencyKey)) return false;
+                          return true;
+                        });
+                        return [...prev, ...unique];
+                      });
+                    }} />
+                    <span className="text-[10px] bg-white/5 px-2 py-0.5 rounded-full text-gray-500 font-mono">{runs.length}</span>
+                  </div>
                 </div>
                 {/* Filter Pills */}
                 <div className="flex gap-1">
@@ -634,11 +699,12 @@ export default function Page() {
                     {/* Step 2: Pay */}
                     <button
                       onClick={payAgentFee}
-                      disabled={loading || !canPay || isPaid}
+                      disabled={loading || !canPay || isPaid || !runReceipt.preflight?.data?.sufficient}
                       className={`px-5 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wide border transition-all flex items-center gap-2 ${isPaid ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400 cursor-default" :
-                        canPay ? "btn-tech-outline" :
+                        canPay && runReceipt.preflight?.data?.sufficient ? "btn-tech-outline" :
                           "border-gray-800 text-gray-700 cursor-not-allowed"
                         }`}
+                      title={!runReceipt.preflight?.data?.sufficient ? "Insufficient balance for fee" : ""}
                     >
                       {isPaid ? (
                         <><span>Sent</span> <span className="text-lg">✓</span></>
@@ -648,11 +714,12 @@ export default function Page() {
                     {/* Step 3: Execute */}
                     <button
                       onClick={executeOnChain}
-                      disabled={loading || !canExecute || isExecuted}
+                      disabled={loading || !canExecute || isExecuted || (!isPaid && !runReceipt.preflight?.data?.sufficientForTotal)}
                       className={`px-6 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wide transition-all shadow-lg flex items-center gap-2 ${isExecuted ? "bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 cursor-default" :
-                        canExecute ? "btn-tech-primary shadow-blue-900/40" :
-                          "bg-gray-900 border border-gray-800 text-gray-600 cursor-not-allowed"
+                        canExecute && (isPaid || runReceipt.preflight?.data?.sufficientForTotal) ? "bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white border border-blue-400/50 shadow-[0_0_15px_rgba(37,99,235,0.4)]" :
+                          "bg-gray-800 text-gray-600 cursor-not-allowed border border-gray-700"
                         }`}
+                      title={!isPaid && !runReceipt.preflight?.data?.sufficientForTotal ? "Insufficient balance for Total (Amount + Fee)" : ""}
                     >
                       {isExecuted ? (
                         <><span>Executed</span> <span className="text-lg">✓</span></>
@@ -677,45 +744,106 @@ export default function Page() {
                   <div className="border-b border-white/5 bg-black/40 p-3 flex justify-between items-center backdrop-blur-3xl">
                     <Tabs tab={tab} setTab={setTab} />
                     <div className="flex gap-2">
+                      {/* Replay Exact: Reuses same intent envelope (should fail if expired) */}
                       <button
-                        className="text-[10px] text-blue-400 hover:text-blue-300 transition-colors uppercase tracking-wider font-bold flex items-center gap-1"
+                        className="text-[10px] text-amber-400 hover:text-amber-300 transition-colors uppercase tracking-wider font-bold flex items-center gap-1"
+                        onClick={async () => {
+                          if (runReceipt?.intent) {
+                            setLoading(true);
+                            setErr(null);
+                            try {
+                              const res = await fetch("/api/run", {
+                                method: "POST",
+                                headers: { "content-type": "application/json" },
+                                body: JSON.stringify({
+                                  intent: runReceipt.intent,
+                                  dryRun,
+                                  walletAddress: wallet?.address,
+                                  forceNew: true, // Force re-evaluation to check expiry/changes
+                                }),
+                              });
+                              const data = await res.json();
+                              if (data.ok) setRunReceipt(data.runReceipt);
+                              else throw new Error(JSON.stringify(data));
+                            } catch (e: any) {
+                              setErr(e?.message ?? String(e));
+                            } finally {
+                              setLoading(false);
+                            }
+                          }
+                        }}
+                        title="Replay with same intent envelope (may fail if expired)"
+                      >
+                        <span>Exact</span> <span className="text-lg">↻</span>
+                      </button>
+
+                      {/* Replay Fresh: Creates new intent with same params (should work) */}
+                      <button
+                        className="text-[10px] text-emerald-400 hover:text-emerald-300 transition-colors uppercase tracking-wider font-bold flex items-center gap-1"
                         onClick={() => {
                           const r = runReceipt;
                           if (r && r.intent.params.amount) {
-                            setPrompt(`Transfer ${r.intent.params.amount} USDC.e`);
+                            // Set prompt and trigger fresh intent creation
+                            const amt = (Number(r.intent.params.amount) / 1e6).toString();
+                            setPrompt(`Transfer ${amt} USDC.e`);
+                            setRecipient(r.intent.params.to || DEFAULT_SELLER);
                           }
                         }}
+                        title="Replay with fresh intent (new ID, same params)"
                       >
-                        <span>Replay</span> <span className="text-lg">↺</span>
+                        <span>Fresh</span> <span className="text-lg">↺</span>
                       </button>
+                      {/* Export Slices */}
+                      <div className="flex items-center gap-1 bg-white/5 rounded-lg p-1">
+                        <span className="text-[10px] text-gray-500 font-bold px-2 uppercase">Export</span>
+                        <button
+                          className="px-2 py-1 text-[10px] text-blue-300 hover:text-white transition-colors uppercase font-bold"
+                          onClick={() => {
+                            const blob = new Blob([runs.map(r => JSON.stringify(r)).join('\n')], { type: "application/x-ndjson" });
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement("a");
+                            a.href = url;
+                            a.download = `runs-all-${new Date().toISOString()}.ndjson`;
+                            a.click();
+                          }}
+                        >
+                          All
+                        </button>
+                        <div className="w-px h-3 bg-white/10" />
+                        <button
+                          className="px-2 py-1 text-[10px] text-blue-300 hover:text-white transition-colors uppercase font-bold"
+                          onClick={() => {
+                            const sliced = runs.slice(0, 10);
+                            const blob = new Blob([sliced.map(r => JSON.stringify(r)).join('\n')], { type: "application/x-ndjson" });
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement("a");
+                            a.href = url;
+                            a.download = `runs-last10-${new Date().toISOString()}.ndjson`;
+                            a.click();
+                          }}
+                        >
+                          Last 10
+                        </button>
+                        <div className="w-px h-3 bg-white/10" />
+                        <button
+                          className="px-2 py-1 text-[10px] text-red-300 hover:text-white transition-colors uppercase font-bold"
+                          onClick={() => {
+                            const failed = runs.filter(r => r.preflight?.ok === false || r.policy?.allowed === false);
+                            if (failed.length === 0) { alert("No failed runs found"); return; }
+                            const blob = new Blob([failed.map(r => JSON.stringify(r)).join('\n')], { type: "application/x-ndjson" });
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement("a");
+                            a.href = url;
+                            a.download = `runs-failed-${new Date().toISOString()}.ndjson`;
+                            a.click();
+                          }}
+                        >
+                          Failed
+                        </button>
+                      </div>
+
                       <button
-                        className="text-[10px] text-blue-400 hover:text-blue-300 transition-colors uppercase tracking-wider font-bold flex items-center gap-1"
-                        onClick={() => {
-                          const blob = new Blob([runs.map(r => JSON.stringify(r)).join('\n')], { type: "application/x-ndjson" });
-                          const url = URL.createObjectURL(blob);
-                          const a = document.createElement("a");
-                          a.href = url;
-                          a.download = `runs-${new Date().toISOString()}.ndjson`;
-                          a.click();
-                        }}
-                      >
-                        <span>NDJSON</span> <span className="text-lg">⇲</span>
-                      </button>
-                      <button
-                        className="text-[10px] text-blue-400 hover:text-blue-300 transition-colors uppercase tracking-wider font-bold flex items-center gap-1"
-                        onClick={() => {
-                          const blob = new Blob([runs.map(r => JSON.stringify(r)).join('\n')], { type: "application/x-ndjson" });
-                          const url = URL.createObjectURL(blob);
-                          const a = document.createElement("a");
-                          a.href = url;
-                          a.download = `runs-${new Date().toISOString()}.ndjson`;
-                          a.click();
-                        }}
-                      >
-                        <span>Export NDJSON</span> <span className="text-lg">⇲</span>
-                      </button>
-                      <button
-                        className="text-[10px] text-blue-400 hover:text-blue-300 transition-colors uppercase tracking-wider font-bold flex items-center gap-1"
+                        className="text-[10px] text-gray-400 hover:text-white transition-colors uppercase tracking-wider font-bold flex items-center gap-1"
                         onClick={() => {
                           const blob = new Blob([JSON.stringify(runReceipt, null, 2)], { type: "application/json" });
                           const url = URL.createObjectURL(blob);
@@ -725,7 +853,7 @@ export default function Page() {
                           a.click();
                         }}
                       >
-                        <span>JSON</span> <span className="text-lg">⇩</span>
+                        <span>JSON</span> <span className="text-lg">↓</span>
                       </button>
                     </div>
                   </div>
@@ -762,10 +890,10 @@ export default function Page() {
                               <div
                                 key={i}
                                 className={`p-3 flex gap-3 items-start border-l-2 transition-colors ${!t.ok
-                                    ? "bg-red-500/5 border-red-500"
-                                    : i === 0
-                                      ? "border-purple-500"
-                                      : "border-white/10 hover:bg-white/5"
+                                  ? "bg-red-500/5 border-red-500"
+                                  : i === 0
+                                    ? "border-purple-500"
+                                    : "border-white/10 hover:bg-white/5"
                                   }`}
                               >
                                 <span className="text-gray-600 w-16 shrink-0 font-bold text-right">
@@ -783,8 +911,58 @@ export default function Page() {
                       </div>
                     )}
                     {tab === "json" && (
-                      <div className="p-6 font-mono text-[10px] leading-relaxed text-gray-400 whitespace-pre-wrap overflow-auto max-h-[500px]">
-                        {JSON.stringify(runReceipt, null, 2)}
+                      <div className="p-4 space-y-3">
+                        {/* Validation controls */}
+                        <div className="flex items-center gap-3">
+                          <button
+                            onClick={() => {
+                              // Simple client-side validation
+                              const errors: string[] = [];
+                              const r = runReceipt;
+                              if (!r?.receiptVersion) errors.push("Missing receiptVersion");
+                              if (!r?.x402Version) errors.push("Missing x402Version");
+                              if (!r?.intent?.id) errors.push("Missing intent.id");
+                              if (!r?.intent?.action) errors.push("Missing intent.action");
+                              if (!r?.policy) errors.push("Missing policy");
+                              if (!r?.preflight) errors.push("Missing preflight");
+                              if (typeof r?.dryRun !== "boolean") errors.push("Missing dryRun");
+                              if (!r?.trace) errors.push("Missing trace");
+                              setValidationResult({ valid: errors.length === 0, errors });
+                            }}
+                            className="px-3 py-1.5 bg-blue-500/20 border border-blue-500/30 rounded text-xs font-bold text-blue-400 hover:bg-blue-500/30 transition-colors"
+                          >
+                            Validate Receipt
+                          </button>
+                          {validationResult && (
+                            <span className={`text-xs font-bold flex items-center gap-1 ${validationResult.valid ? "text-emerald-400" : "text-red-400"
+                              }`}>
+                              {validationResult.valid ? "✅ Valid" : `❌ ${validationResult.errors.length} errors`}
+                            </span>
+                          )}
+                          {runReceipt?.idempotencyKey && (
+                            <span className="text-[10px] text-gray-500 font-mono">
+                              idemKey: {runReceipt.idempotencyKey.slice(0, 8)}...
+                            </span>
+                          )}
+                          {runReceipt?.deduped && (
+                            <span className="text-[10px] px-1.5 py-0.5 bg-amber-500/20 border border-amber-500/30 rounded text-amber-400 font-bold">
+                              DEDUPED
+                            </span>
+                          )}
+                        </div>
+                        {validationResult && !validationResult.valid && (
+                          <div className="p-2 bg-red-500/10 border border-red-500/30 rounded text-[10px] text-red-300 font-mono">
+                            {validationResult.errors.map((e, i) => <div key={i}>• {e}</div>)}
+                          </div>
+                        )}
+                        <div className="font-mono text-[10px] leading-relaxed text-gray-400 whitespace-pre-wrap overflow-auto max-h-[400px]">
+                          {JSON.stringify(runReceipt, null, 2)}
+                        </div>
+
+                        <SupportTicket
+                          runReceipt={runReceipt}
+                          chainId={wallet?.chainId || 338}
+                        />
                       </div>
                     )}
                   </div>
@@ -807,6 +985,6 @@ export default function Page() {
         </div>
 
       </div>
-    </div>
+    </div >
   );
 }

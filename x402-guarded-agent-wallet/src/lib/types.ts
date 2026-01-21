@@ -2,6 +2,7 @@ export type CronosNetwork = "cronos-testnet" | "cronos-mainnet";
 
 export type ActionIntent = {
   id: string;                  // unique intent identifier
+  idempotencyKey?: string;     // hash(params + seller + chainId) for deduplication
   createdAt: number;           // unix seconds
   action: "transfer";
   params: {
@@ -10,6 +11,7 @@ export type ActionIntent = {
     amount: string;         // base units (wei-like string)
   };
   fee: string;                // USDC.e base units
+  requiredTotal: string;      // amount + fee
   sessionExpiry: number;       // unix seconds
 };
 
@@ -24,7 +26,8 @@ export type PreflightReceipt = {
   };
   data?: {
     balance: string;         // User's balance of token
-    sufficient: boolean;     // balance >= amount + fee
+    sufficient: boolean;     // balance >= amount
+    sufficientForTotal: boolean; // balance >= amount + fee
     requiredTotal: string;   // amount + fee
   };
   simulation?: {
@@ -33,6 +36,7 @@ export type PreflightReceipt = {
     revertReason?: string | null;
   };
   error?: string;
+  changes?: string[];      // List of things changed since last run (if retrying)
   ts: number;
 };
 
@@ -66,6 +70,9 @@ import { RiskAnalysis } from "./risk-constants";
 export type RunReceipt = {
   receiptVersion: "1.0";
   x402Version: 1;
+  schemaHash?: string;         // Hash of schema for validation
+  idempotencyKey?: string;     // From intent
+  deduped?: boolean;           // True if this was a duplicate run
   intent: ActionIntent;
   policy: { allowed: boolean; rulesTriggered: string[]; reason?: string };
   risk?: RiskAnalysis; // Added RiskAnalysis

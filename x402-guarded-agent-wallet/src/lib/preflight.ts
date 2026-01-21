@@ -115,7 +115,8 @@ export async function runPreflight(intent: ActionIntent, opts?: { walletAddress?
 
       // Check actual balance if wallet address is provided
       let balanceStr = "unknown (wallet not connected in preflight)";
-      let sufficient = true; // assume true unless we can check
+      let sufficientForAmount = true; // assume true
+      let sufficientForTotal = true; // assume true
 
       if (opts?.walletAddress && isAddress(opts.walletAddress)) {
         try {
@@ -127,24 +128,26 @@ export async function runPreflight(intent: ActionIntent, opts?: { walletAddress?
           }) as bigint;
 
           balanceStr = balance.toString();
-          // Check balance >= amount + fee
-          sufficient = balance >= requiredTotal;
+          sufficientForAmount = balance >= amount;
+          sufficientForTotal = balance >= requiredTotal;
         } catch (e) {
           balanceStr = "error reading balance";
-          sufficient = false;
+          sufficientForAmount = false;
+          sufficientForTotal = false;
         }
       }
 
       receipt.data = {
         balance: balanceStr,
-        sufficient,
+        sufficient: sufficientForAmount,
+        sufficientForTotal,
         requiredTotal: requiredTotal.toString(),
       };
 
       receipt.simulation = {
         success: true,
         notes: opts?.walletAddress
-          ? `Token contract verified. Balance: ${balanceStr}, Sufficient: ${sufficient}`
+          ? `Token contract verified. Balance: ${balanceStr}, Sufficient: ${sufficientForAmount}`
           : "Token contract verified. Balance check deferred to execution.",
         revertReason: null,
       };

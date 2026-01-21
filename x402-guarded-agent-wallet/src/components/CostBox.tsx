@@ -4,6 +4,7 @@ interface CostBoxProps {
     amount: string;      // base units
     fee: string;         // base units
     balance: string;     // base units or "unknown..."
+    sufficientForTotal: boolean;
     decimals?: number;
 }
 
@@ -23,23 +24,15 @@ function formatUnits(value: string, decimals: number = 6): string {
     }
 }
 
-export default function CostBox({ amount, fee, balance, decimals = 6 }: CostBoxProps) {
+export default function CostBox({ amount, fee, balance, sufficientForTotal, decimals = 6 }: CostBoxProps) {
     const amountBig = BigInt(amount || "0");
     const feeBig = BigInt(fee || "0");
     const totalRequired = amountBig + feeBig;
 
-    let balanceBig = BigInt(0);
-    let isSufficient = true;
     let isUnknown = false;
+    let isSufficient = sufficientForTotal;
 
-    if (balance && balance !== "unknown (wallet not connected in preflight)") {
-        try {
-            balanceBig = BigInt(balance);
-            isSufficient = balanceBig >= totalRequired;
-        } catch {
-            isUnknown = true;
-        }
-    } else {
+    if (!balance || balance === "unknown (wallet not connected in preflight)") {
         isUnknown = true;
     }
 
@@ -67,7 +60,7 @@ export default function CostBox({ amount, fee, balance, decimals = 6 }: CostBoxP
             <div className="flex justify-between">
                 <span className="text-gray-400">Your Balance:</span>
                 <span className={`flex items-center gap-1 ${isUnknown ? "text-gray-500" :
-                        isSufficient ? "text-emerald-400" : "text-red-400"
+                    isSufficient ? "text-emerald-400" : "text-red-400"
                     }`}>
                     {isUnknown ? "Connect wallet" : `${formatUnits(balance, decimals)} USDC.e`}
                     {!isUnknown && (

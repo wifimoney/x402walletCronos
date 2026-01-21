@@ -4,7 +4,7 @@ import { buildIntent } from "@/lib/plan";
 import { evaluatePolicy } from "@/lib/policy";
 import { runPreflight } from "@/lib/preflight";
 import { buildRunReceipt, trace } from "@/lib/receipt";
-import { getPaid, isExecuted, markExecuted } from "@/lib/store";
+import { getPaid, isExecuted, markExecuted, getRunByIdempotencyKey, storeRunByIdempotencyKey } from "@/lib/store";
 import { evaluateRisk } from "@/lib/risk";
 
 const BodySchema = z.object({
@@ -15,6 +15,7 @@ const BodySchema = z.object({
     simulateExpired: z.boolean().optional(),
     recipient: z.string().optional(),
     walletAddress: z.string().regex(/^0x[a-fA-F0-9]{40}$/).optional(),
+    forceNew: z.boolean().optional(),
 });
 
 export async function POST(req: Request) {
@@ -34,6 +35,7 @@ export async function POST(req: Request) {
     let intent = parsed.data.intent;
 
     const t: any[] = [];
+    let previousRun: any = null;
 
     // 1. Plan (or use existing)
     if (!intent) {
@@ -51,7 +53,27 @@ export async function POST(req: Request) {
             t.push(trace("plan", true, `Simulating expired intent (expiry=${intent.sessionExpiry})`));
         }
 
-        t.push(trace("plan", true, `Intent built (id=${intent.id})`));
+        t.push(trace("plan", true, `Intent built (id=${intent.id}, idemKey=${intent.idempotencyKey?.slice(0, 8)})`));
+
+        // Check for duplicate run by idempotencyKey
+        if (intent.idempotencyKey) {
+            const cachedReceipt = getRunByIdempotencyKey(intent.idempotencyKey);
+            if (cachedReceipt) {
+                if (!parsed.data.forceNew) {
+                    t.push(trace("idempotency", true, `Duplicate run detected (idemKey=${intent.idempotencyKey.slice(0, 8)})`));
+                    return NextResponse.json({
+                        ok: true,
+                        runReceipt: {
+                            ...cachedReceipt,
+                            deduped: true,
+                        },
+                    });
+                } else {
+                    t.push(trace("idempotency", true, `Forcing new run (idemKey=${intent.idempotencyKey.slice(0, 8)})`));
+                    previousRun = cachedReceipt;
+                }
+            }
+        }
     } else {
         t.push(trace("plan", true, `Resuming intent (id=${intent.id})`));
     }
@@ -111,6 +133,30 @@ export async function POST(req: Request) {
     const walletAddress = parsed.data.walletAddress as `0x${string}` | undefined;
     const preflight = await runPreflight(intent, { walletAddress });
     t.push(trace("preflight", preflight.ok, preflight.ok ? "Preflight OK" : `Preflight failed: ${preflight.error ?? "unknown"}`));
+
+    // Preflight Diff Logic
+    if (previousRun?.preflight) {
+        const changes: string[] = [];
+        const prev = previousRun.preflight;
+
+        if (prev.health?.rpcUp !== preflight.health?.rpcUp) {
+            changes.push(`RPC status changed: ${prev.health?.rpcUp ? 'Up' : 'Down'} -> ${preflight.health?.rpcUp ? 'Up' : 'Down'}`);
+        }
+        if (prev.health?.facilitatorUp !== preflight.health?.facilitatorUp) {
+            changes.push(`Facilitator status changed: ${prev.health?.facilitatorUp ? 'Up' : 'Down'} -> ${preflight.health?.facilitatorUp ? 'Up' : 'Down'}`);
+        }
+        if (prev.data?.balance !== preflight.data?.balance) {
+            changes.push(`Balance changed: ${prev.data?.balance} -> ${preflight.data?.balance}`);
+        }
+        if (prev.data?.sufficient !== preflight.data?.sufficient) {
+            changes.push(`Sufficiency status changed: ${prev.data?.sufficient} -> ${preflight.data?.sufficient}`);
+        }
+
+        if (changes.length > 0) {
+            preflight.changes = changes;
+            t.push(trace("diff", true, `Changes detected: ${changes.length}`));
+        }
+    }
 
     // Evaluate Risk (always happen)
     const risk = evaluateRisk(intent, preflight, policy.allowed);
@@ -181,6 +227,11 @@ export async function POST(req: Request) {
         trace: t,
     });
 
-    return NextResponse.json({ ok: true, runReceipt: rr });
+    // Store for idempotency deduplication
+    if (intent.idempotencyKey) {
+        storeRunByIdempotencyKey(intent.idempotencyKey, { ...rr, idempotencyKey: intent.idempotencyKey });
+    }
+
+    return NextResponse.json({ ok: true, runReceipt: { ...rr, idempotencyKey: intent.idempotencyKey } });
 }
 
