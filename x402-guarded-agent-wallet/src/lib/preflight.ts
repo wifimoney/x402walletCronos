@@ -94,6 +94,8 @@ export async function runPreflight(intent: ActionIntent, opts?: { walletAddress?
     // 4) Balance Check (replaces Quote)
     const token = intent.params.token as `0x${string}`;
     const amount = BigInt(intent.params.amount);
+    const fee = BigInt(intent.fee || "0");
+    const requiredTotal = amount + fee;
 
     // Default: Check sender's balance (in a real scenario, we'd need the sender address here)
     // For preflight simulation without a connected wallet context passed in, we might assume
@@ -125,7 +127,8 @@ export async function runPreflight(intent: ActionIntent, opts?: { walletAddress?
           }) as bigint;
 
           balanceStr = balance.toString();
-          sufficient = balance >= amount;
+          // Check balance >= amount + fee
+          sufficient = balance >= requiredTotal;
         } catch (e) {
           balanceStr = "error reading balance";
           sufficient = false;
@@ -135,6 +138,7 @@ export async function runPreflight(intent: ActionIntent, opts?: { walletAddress?
       receipt.data = {
         balance: balanceStr,
         sufficient,
+        requiredTotal: requiredTotal.toString(),
       };
 
       receipt.simulation = {

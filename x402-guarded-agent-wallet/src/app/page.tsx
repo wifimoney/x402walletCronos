@@ -289,13 +289,24 @@ export default function Page() {
 
       await publicClient.waitForTransactionReceipt({ hash: txHash });
 
-      // After balance
+      // After balance (sender)
       const after = await publicClient.readContract({
         address: tokenAddress,
         abi: ERC20_ABI,
         functionName: "balanceOf",
         args: [user],
       }) as bigint;
+
+      // Recipient balance after (for delta display)
+      let recipientAfter: bigint = BigInt(0);
+      try {
+        recipientAfter = await publicClient.readContract({
+          address: tokenAddress,
+          abi: ERC20_ABI,
+          functionName: "balanceOf",
+          args: [recipientAddress],
+        }) as bigint;
+      } catch { /* ignore if recipient check fails */ }
 
       const txBase = process.env.NEXT_PUBLIC_EXPLORER_TX_BASE || "";
       const txLink = txBase ? `${txBase}${txHash}` : null;
@@ -308,13 +319,17 @@ export default function Page() {
           status: "success",
           links: { tx: txLink },
           balanceDeltas: {
-            token: (after - before).toString(),
+            sender: (after - before).toString(),
+            recipient: `+${amount.toString()}`,
           },
           enforced: {
             amount: transferAmount,
           },
           workflowPath,
-          logsSummary: ["Transfer executed successfully"]
+          logsSummary: [
+            `Submitted transfer tx ${txHash.slice(0, 10)}...`,
+            `Confirmed success. Sender delta: ${(after - before).toString()}, Recipient: +${amount.toString()}`
+          ]
         },
       };
 

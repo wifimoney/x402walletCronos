@@ -155,7 +155,7 @@ export async function POST(req: Request) {
     }
 
     // 6. Execution Stub / Mark Executed
-    t.push(trace("execute", true, dryRun ? "Dry-run execution" : "Execution stub/ready"));
+    t.push(trace("execute", true, dryRun ? "Dry-run simulation complete" : "Ready for client-side transfer execution"));
 
     if (!dryRun && intent.id) {
         markExecuted(intent.id);

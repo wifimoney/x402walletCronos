@@ -24,7 +24,8 @@ export type PreflightReceipt = {
   };
   data?: {
     balance: string;         // User's balance of token
-    sufficient: boolean;     // balance >= amount
+    sufficient: boolean;     // balance >= amount + fee
+    requiredTotal: string;   // amount + fee
   };
   simulation?: {
     success: boolean;
