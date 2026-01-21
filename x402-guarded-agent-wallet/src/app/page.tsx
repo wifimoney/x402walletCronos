@@ -91,8 +91,10 @@ export default function Page() {
 
   // Check if we are PAID or it's a dry run
   const isPaid = !!runReceipt?.payment?.ok;
-  // Execution requires: intent, preflight ok, wallet, network, AND (paid OR dryRun)
-  const canExecute = !!intentId && preflightOk && !!wallet && isCorrectNetwork && (isPaid || dryRun);
+  // Check if execution is complete
+  const isExecuted = runReceipt?.execution?.status === "success" && runReceipt?.execution?.txHash && runReceipt?.execution?.txHash !== "dry-run" && runReceipt?.execution?.txHash !== "stub";
+  // Execution requires: intent, preflight ok, wallet, network, AND (paid OR dryRun), AND not already executed
+  const canExecute = !!intentId && preflightOk && !!wallet && isCorrectNetwork && (isPaid || dryRun) && !isExecuted;
 
 
   // --- Actions ---
@@ -559,13 +561,27 @@ export default function Page() {
                     {/* Step 3: Execute */}
                     <button
                       onClick={executeOnChain}
-                      disabled={loading || !canExecute}
-                      className={`px-6 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wide transition-all shadow-lg ${canExecute ? "btn-tech-primary shadow-blue-900/40" :
-                        "bg-gray-900 border border-gray-800 text-gray-600 cursor-not-allowed"
+                      disabled={loading || !canExecute || isExecuted}
+                      className={`px-6 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wide transition-all shadow-lg flex items-center gap-2 ${isExecuted ? "bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 cursor-default" :
+                        canExecute ? "btn-tech-primary shadow-blue-900/40" :
+                          "bg-gray-900 border border-gray-800 text-gray-600 cursor-not-allowed"
                         }`}
                     >
-                      {loading ? "Executing..." : "3. Execute Transfer"}
+                      {isExecuted ? (
+                        <><span>Executed</span> <span className="text-lg">✓</span></>
+                      ) : loading ? "Executing..." : "3. Execute Transfer"}
                     </button>
+                    {/* Show tx link after execution */}
+                    {isExecuted && runReceipt?.execution?.links?.tx && (
+                      <a
+                        href={runReceipt.execution.links.tx}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-[10px] text-blue-400 hover:text-blue-300 underline flex items-center gap-1"
+                      >
+                        View TX ↗
+                      </a>
+                    )}
                   </div>
                 </div>
 

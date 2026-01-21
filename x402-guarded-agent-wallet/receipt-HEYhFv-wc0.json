@@ -1,0 +1,171 @@
+{
+  "receiptVersion": "1.0",
+  "x402Version": 1,
+  "intent": {
+    "id": "HEYhFv-wc0",
+    "createdAt": 1769033106,
+    "action": "transfer",
+    "params": {
+      "token": "0xc01efAaF7C5C61bEbFAeb358E1161b537b8bC0e0",
+      "to": "0x5077eDDBCEA8692E81338aDC922ACF1A47699885",
+      "amount": "10000000"
+    },
+    "fee": "1000000",
+    "sessionExpiry": 1769033406,
+    "simulateRpcDown": false
+  },
+  "policy": {
+    "allowed": true,
+    "rulesTriggered": [
+      "OK_action_transfer",
+      "OK_intent_not_expired",
+      "OK_token_USDCe",
+      "OK_amount_under_cap",
+      "OK_recipient_valid"
+    ],
+    "reason": "Policy OK"
+  },
+  "risk": {
+    "score": 0,
+    "flags": []
+  },
+  "preflight": {
+    "ok": true,
+    "health": {
+      "facilitatorUp": true,
+      "supportedOk": true,
+      "rpcUp": true,
+      "latencyMs": {
+        "facilitator": 112,
+        "rpc": 485
+      },
+      "supported": {
+        "network": "cronos-testnet",
+        "scheme": "exact",
+        "x402Version": 1
+      }
+    },
+    "ts": 1769033129828,
+    "data": {
+      "balance": "18000000",
+      "sufficient": true
+    },
+    "simulation": {
+      "success": true,
+      "notes": "Token contract verified. Balance: 18000000, Sufficient: true",
+      "revertReason": null
+    }
+  },
+  "payment": {
+    "ok": true,
+    "txHash": "0x2de996e4c108a6c282ab1143a596cc27c68e51e713a9b2e99ddebf521e3dcda4",
+    "receiptId": "0x57b6aa62f8b7b6299c291f8b92fb4f618591334df2ab0511e6b09e4ba7ed81ce"
+  },
+  "x402": {
+    "verify": {
+      "isValid": true,
+      "timestamp": 1769033131563
+    },
+    "settle": {
+      "txHash": "0x2de996e4c108a6c282ab1143a596cc27c68e51e713a9b2e99ddebf521e3dcda4",
+      "link": "https://explorer.cronos.org/testnet/tx/0x2de996e4c108a6c282ab1143a596cc27c68e51e713a9b2e99ddebf521e3dcda4",
+      "timestamp": 1769033131563
+    },
+    "trace": [
+      {
+        "step": "verify",
+        "ok": true,
+        "timestamp": 1769033131563
+      },
+      {
+        "step": "settle",
+        "ok": true,
+        "timestamp": 1769033131563
+      }
+    ]
+  },
+  "execution": {
+    "txHash": "0xf6ec26978bf1918ebffc153edee83857a7893d83bb1c947b736101dbe76a6d0b",
+    "status": "success",
+    "links": {
+      "tx": "https://explorer.cronos.org/testnet/tx/0xf6ec26978bf1918ebffc153edee83857a7893d83bb1c947b736101dbe76a6d0b"
+    },
+    "balanceDeltas": {
+      "token": "0"
+    },
+    "enforced": {
+      "amount": "10000000"
+    },
+    "workflowPath": [
+      "preflight",
+      "pay",
+      "transfer"
+    ],
+    "logsSummary": [
+      "Transfer executed successfully"
+    ]
+  },
+  "trace": [
+    {
+      "tsUnix": 1769033129,
+      "step": "plan",
+      "ok": true,
+      "message": "Resuming intent (id=HEYhFv-wc0)"
+    },
+    {
+      "tsUnix": 1769033129,
+      "step": "policy",
+      "ok": true,
+      "message": "Evaluating policy..."
+    },
+    {
+      "tsUnix": 1769033129,
+      "step": "policy",
+      "ok": true,
+      "message": "Policy allowed"
+    },
+    {
+      "tsUnix": 1769033129,
+      "step": "preflight",
+      "ok": true,
+      "message": "Running preflight checks..."
+    },
+    {
+      "tsUnix": 1769033131,
+      "step": "preflight",
+      "ok": true,
+      "message": "Preflight OK"
+    },
+    {
+      "tsUnix": 1769033131,
+      "step": "policy",
+      "ok": true,
+      "message": "Risk Score: 0 ()"
+    },
+    {
+      "tsUnix": 1769033131,
+      "step": "pay",
+      "ok": true,
+      "message": "Checking payment gate..."
+    },
+    {
+      "tsUnix": 1769033131,
+      "step": "pay",
+      "ok": true,
+      "message": "Payment found ✅"
+    },
+    {
+      "tsUnix": 1769033131,
+      "step": "execute",
+      "ok": true,
+      "message": "Execution stub/ready"
+    },
+    {
+      "tsUnix": 1769033131,
+      "step": "lifecycle",
+      "ok": true,
+      "message": "Marked as executed"
+    }
+  ],
+  "dryRun": false
+}
