@@ -30,13 +30,11 @@ export const CHAIN_ID: Record<CronosNetwork, number> = {
 // Mainnet WCRO commonly shown as 0x5C7F8A570d578ED84E63fdFA7b1eE72dEae1AE23.  [oai_citation:3‡explorer.cronos.org](https://explorer.cronos.org/address/0x5c7f8a570d578ed84e63fdfa7b1ee72deae1ae23?utm_source=chatgpt.com)
 export const WCRO: Record<CronosNetwork, `0x${string}`> = {
   "cronos-mainnet": "0x5C7F8A570d578ED84E63fdFA7b1eE72dEae1AE23",
-  // For testnet, plug the WCRO you’re using (or swap to a testnet router/pair you know works).
-  // If you don’t have one yet, leave tokenOut in the plan as CRO and skip quote until you set this.
-  "cronos-testnet": "0x0000000000000000000000000000000000000000",
+  "cronos-testnet": "0x6a3173618859C7cd8452b20fb5deAB01d4D64006", // VVS Testnet WCRO
 };
 
-// Common Quote Token (PHOTON) - Replace with actual address
+// Common Quote Token (PHOTON) - Using USDC as placeholder for intermediate hops on Testnet if needed
 export const PHOTON: Record<CronosNetwork, `0x${string}`> = {
-  "cronos-mainnet": "0x0000000000000000000000000000000000000000", // TODO: Set mainnet PHOTON
-  "cronos-testnet": "0x0000000000000000000000000000000000000000", // TODO: Set testnet PHOTON
+  "cronos-mainnet": "0x0000000000000000000000000000000000000000",
+  "cronos-testnet": "0xc21223249CA28397B4B6541dfFaEcC539BfF0c59", // Testnet USDC
 };

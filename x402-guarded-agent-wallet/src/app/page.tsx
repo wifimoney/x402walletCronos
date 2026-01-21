@@ -30,7 +30,7 @@ function Tabs({
 }
 
 export default function Page() {
-  const [prompt, setPrompt] = useState("Swap 10 USDC.e to CRO");
+  const [prompt, setPrompt] = useState("Swap 10 USDC.e to WCRO");
   const [dryRun, setDryRun] = useState(true);
   const [simulateRpcDown, setSimulateRpcDown] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -44,18 +44,20 @@ export default function Page() {
 
   const intentId = runReceipt?.intent?.id;
 
-  const canPay = useMemo(() => !!intentId && !dryRun, [intentId, dryRun]);
+  // Preflight Gate: Block payment if preflight failed
+  const preflightOk = runReceipt?.preflight?.ok;
+  const canPay = useMemo(() => !!intentId && !dryRun && preflightOk, [intentId, dryRun, preflightOk]);
 
   async function run(simulateExpired = false) {
     setErr(null);
     setPayOut(null);
     setLoading(true);
     try {
-      const body: any = { dryRun, simulateRpcDown };
+      const body: any = { dryRun, simulateRpcDown, simulateExpired };
 
       // If prompt hasn't changed and we have an intent, try to resume/execute it
       // This is critical for the "Pay -> Run (Real)" flow
-      if (prompt === lastRunPrompt && runReceipt?.intent) {
+      if (prompt === lastRunPrompt && runReceipt?.intent && !simulateExpired) {
         body.intent = runReceipt.intent;
       } else {
         body.prompt = prompt;
@@ -82,6 +84,7 @@ export default function Page() {
     setPayOut(null);
 
     if (!intentId) return setErr("Run first to generate intentId.");
+    if (!preflightOk) return setErr("Preflight checks must pass before payment.");
     if (!window.ethereum) return setErr("No injected wallet found (MetaMask/Rabby).");
 
     try {
@@ -156,6 +159,11 @@ export default function Page() {
       return setErr("Run first so intent + preflight exist.");
     }
 
+    // Ensure preflight passed
+    if (!runReceipt.preflight.ok) {
+      return setErr("Preflight failed. Cannot execute.");
+    }
+
     setLoading(true);
     try {
       const wallet = createWalletClient({
@@ -216,9 +224,11 @@ export default function Page() {
       }) as bigint;
 
       let approveTxHash: `0x${string}` | null = null;
+      const workflowPath: string[] = ["preflight", "pay"];
 
       const amountIn = BigInt(p.amountIn);
       if (allowance < amountIn) {
+        workflowPath.push("approve");
         approveTxHash = await wallet.writeContract({
           address: p.tokenIn,
           abi: ERC20_ABI,
@@ -229,7 +239,11 @@ export default function Page() {
         });
 
         await publicClient.waitForTransactionReceipt({ hash: approveTxHash });
+      } else {
+        workflowPath.push("approve_skipped");
       }
+
+      workflowPath.push("swap");
 
       // Swap
       const swapTxHash = await wallet.writeContract({
@@ -293,6 +307,7 @@ export default function Page() {
             deadline: p.deadline,
             path: p.path,
           },
+          workflowPath, // Added workflowPath
         },
       };
 
@@ -309,6 +324,7 @@ export default function Page() {
       intentId: runReceipt.intent?.id,
       policyAllowed: runReceipt.policy?.allowed,
       preflightOk: runReceipt.preflight?.ok,
+      risk: runReceipt.risk, // Added Risk
       quote: {
         expectedOut: runReceipt.preflight?.quote?.expectedOut ?? null,
         minOut: runReceipt.preflight?.quote?.minOut ?? null,
@@ -320,6 +336,7 @@ export default function Page() {
         beforeBalances: runReceipt.execution.beforeBalances,
         afterBalances: runReceipt.execution.afterBalances,
         enforced: runReceipt.execution.enforced,
+        workflowPath: runReceipt.execution.workflowPath, // Added to summary
       } : null,
       dryRun: runReceipt.dryRun,
     }
@@ -362,10 +379,16 @@ export default function Page() {
           </label>
 
           <button
-            className="px-4 py-2 rounded border disabled:opacity-50"
+            className="px-4 py-2 rounded border disabled:opacity-50 disabled:bg-gray-100 disabled:cursor-not-allowed"
             onClick={payAgentFee}
             disabled={loading || !canPay}
-            title={dryRun ? "Disable dry-run to enable payment" : "Pay agent fee via x402"}
+            title={
+              !preflightOk
+                ? "Preflight check failed. Cannot pay."
+                : dryRun
+                  ? "Disable dry-run to enable payment"
+                  : "Pay agent fee via x402"
+            }
           >
             Pay agent fee (x402)
           </button>
@@ -381,19 +404,48 @@ export default function Page() {
         </div>
 
         <div className="flex items-center gap-4 pt-2">
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="simulateRpcDown"
+              checked={simulateRpcDown}
+              onChange={(e) => setSimulateRpcDown(e.target.checked)}
+              disabled={loading}
+            />
+            <label htmlFor="simulateRpcDown" className="text-xs text-gray-500">Simulate RPC Down</label>
+          </div>
+
           <button
             className="text-xs text-gray-500 underline"
             onClick={() => {
-              // Quick hack to force expire next run
-              // Ideally we pass this via state to run()
+              // Forced expired run
               run(true);
             }}
             disabled={loading}
+            title="Sets usage deadline to past"
           >
             Simulate Expired Intent (Dev)
           </button>
+
+          {/* Download Receipt Button */}
+          {runReceipt && (
+            <button
+              className="text-xs text-blue-600 underline ml-4"
+              onClick={() => {
+                const blob = new Blob([JSON.stringify(runReceipt, null, 2)], { type: "application/json" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `receipt-${intentId || "unknown"}.json`;
+                a.click();
+              }}
+            >
+              Download Receipt (JSON)
+            </button>
+          )}
         </div>
       </section>
+
 
       {err && (
         <pre className="p-3 bg-red-50 border border-red-200 rounded text-xs overflow-auto">
@@ -404,8 +456,19 @@ export default function Page() {
       {runReceipt && (
         <section className="border rounded p-4 space-y-3">
           <div className="flex items-center justify-between">
-            <div className="text-sm font-semibold">
-              RunReceipt (intentId: <span className="font-mono">{intentId}</span>)
+            <div className="flex items-center gap-3">
+              <div className="text-sm font-semibold">
+                RunReceipt (intentId: <span className="font-mono">{intentId}</span>)
+              </div>
+              {/* Risk Badge */}
+              {runReceipt.risk && (
+                <div className={`text-xs px-2 py-0.5 rounded border ${runReceipt.risk.score > 50 ? 'bg-red-100 border-red-300 text-red-800' :
+                  runReceipt.risk.score > 20 ? 'bg-yellow-100 border-yellow-300 text-yellow-800' :
+                    'bg-green-100 border-green-300 text-green-800'
+                  }`}>
+                  Risk: {runReceipt.risk.score}/100
+                </div>
+              )}
             </div>
             <Tabs tab={tab} setTab={setTab} />
           </div>

@@ -5,6 +5,7 @@ import { evaluatePolicy } from "@/lib/policy";
 import { runPreflight } from "@/lib/preflight";
 import { buildRunReceipt, trace } from "@/lib/receipt";
 import { getPaid, isExecuted, markExecuted } from "@/lib/store";
+import { evaluateRisk } from "@/lib/risk";
 
 const BodySchema = z.object({
     prompt: z.string().optional(),
@@ -61,12 +62,16 @@ export async function POST(req: Request) {
     // 2. Lifecycle Checks (Idempotency + Expiry)
     if (intent.id) {
         if (isExecuted(intent.id)) {
+            const policy = evaluatePolicy(intent, { dryRun });
+            const preflight = { ok: false, error: "ALREADY_EXECUTED", ts: Date.now(), health: { facilitatorUp: true, supportedOk: true, rpcUp: true, latencyMs: {} } };
+            const risk = evaluateRisk(intent, preflight, policy.allowed);
             return NextResponse.json({
                 ok: true,
                 runReceipt: buildRunReceipt({
                     intent,
-                    policy: evaluatePolicy(intent, { dryRun }),
-                    preflight: { ok: false, error: "ALREADY_EXECUTED", ts: Date.now(), health: { facilitatorUp: true, supportedOk: true, rpcUp: true, latencyMs: {} } },
+                    policy,
+                    risk, // NEW
+                    preflight,
                     dryRun,
                     payment: null,
                     execution: { txHash: "ALREADY_EXECUTED", status: "reverted", logsSummary: ["Intent already executed"] },
@@ -76,12 +81,16 @@ export async function POST(req: Request) {
         }
         const now = Math.floor(Date.now() / 1000);
         if (intent.sessionExpiry && now > intent.sessionExpiry) {
+            const policy = evaluatePolicy(intent, { dryRun });
+            const preflight = { ok: false, error: "EXPIRED", ts: Date.now(), health: { facilitatorUp: true, supportedOk: true, rpcUp: true, latencyMs: {} } };
+            const risk = evaluateRisk(intent, preflight, policy.allowed);
             return NextResponse.json({
                 ok: true,
                 runReceipt: buildRunReceipt({
                     intent,
-                    policy: evaluatePolicy(intent, { dryRun }),
-                    preflight: { ok: false, error: "EXPIRED", ts: Date.now(), health: { facilitatorUp: true, supportedOk: true, rpcUp: true, latencyMs: {} } },
+                    policy,
+                    risk, // NEW
+                    preflight,
                     dryRun,
                     payment: null,
                     execution: { txHash: "EXPIRED", status: "reverted", logsSummary: ["Intent session expired"] },
@@ -101,11 +110,16 @@ export async function POST(req: Request) {
     const preflight = await runPreflight(intent);
     t.push(trace("preflight", preflight.ok, preflight.ok ? "Preflight OK" : `Preflight failed: ${preflight.error ?? "unknown"}`));
 
+    // Evaluate Risk (always happen)
+    const risk = evaluateRisk(intent, preflight, policy.allowed);
+    t.push(trace("policy", true, `Risk Score: ${risk.score} (${risk.flags.join(", ")})`));
+
     // Early return if blocked
     if (!policy.allowed || !preflight.ok) {
         const rr = buildRunReceipt({
             intent,
             policy,
+            risk, // NEW
             preflight,
             dryRun,
             payment: null,
@@ -125,6 +139,7 @@ export async function POST(req: Request) {
             const rr = buildRunReceipt({
                 intent,
                 policy,
+                risk, // NEW
                 preflight,
                 dryRun,
                 payment: { ok: false, error: "NOT_PAID" }, // Critical signal to UI
@@ -156,6 +171,7 @@ export async function POST(req: Request) {
     const rr = buildRunReceipt({
         intent,
         policy,
+        risk, // NEW
         preflight,
         dryRun,
         payment,
@@ -165,3 +181,4 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ ok: true, runReceipt: rr });
 }
+

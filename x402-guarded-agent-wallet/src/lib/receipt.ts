@@ -3,6 +3,7 @@ import type {
   PreflightReceipt,
   RunReceipt,
 } from "./types";
+import type { RiskAnalysis } from "./risk-constants";
 
 export function trace(step: RunReceipt["trace"][number]["step"], ok: boolean, message: string) {
   return {
@@ -16,6 +17,7 @@ export function trace(step: RunReceipt["trace"][number]["step"], ok: boolean, me
 export function buildRunReceipt(args: {
   intent: ActionIntent;
   policy: { allowed: boolean; rulesTriggered: string[]; reason?: string };
+  risk?: RiskAnalysis;
   preflight: PreflightReceipt;
   dryRun: boolean;
   payment?: { ok: boolean; receiptId?: string; txHash?: string; error?: string } | null;
@@ -25,17 +27,23 @@ export function buildRunReceipt(args: {
   return {
     intent: args.intent as any,
     policy: args.policy as any,
+    risk: args.risk,
     preflight: args.preflight as any,
     payment: args.payment ?? null,
     x402: args.payment?.ok
       ? {
-        verify: { isValid: true },
+        verify: { isValid: true, timestamp: Date.now() },
         settle: {
           txHash: args.payment.txHash,
           link: args.payment.txHash
-            ? `https://explorer.cronos.org/testnet/tx/${args.payment.txHash}` // TODO: Use env/network aware link
+            ? `https://explorer.cronos.org/testnet/tx/${args.payment.txHash}`
             : undefined,
+          timestamp: Date.now(),
         },
+        trace: [
+          { step: "verify", ok: true, timestamp: Date.now() },
+          { step: "settle", ok: !!args.payment.txHash, timestamp: Date.now() }
+        ]
       }
       : undefined,
     execution: args.execution

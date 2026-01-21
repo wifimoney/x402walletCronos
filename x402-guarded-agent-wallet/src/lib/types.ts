@@ -65,15 +65,19 @@ export type X402DecodedPaymentHeader = {
   };
 };
 
+import { RiskAnalysis } from "./risk-constants";
+
 export type RunReceipt = {
   intent: ActionIntent;
   policy: { allowed: boolean; rulesTriggered: string[]; reason?: string };
+  risk?: RiskAnalysis; // Added RiskAnalysis
   preflight: PreflightReceipt;
   dryRun: boolean;
   payment: { ok: boolean; error?: string; txHash?: string; receiptId?: string } | null;
   x402?: {
-    verify: { isValid: boolean };
-    settle: { txHash?: string; link?: string };
+    verify: { isValid: boolean; timestamp?: number };
+    settle: { txHash?: string; link?: string; timestamp?: number };
+    trace?: { step: "verify" | "settle"; ok: boolean; timestamp: number }[]; // Explicit trace
   };
   execution: {
     txHash: string;
@@ -85,6 +89,7 @@ export type RunReceipt = {
     balanceDeltas?: { tokenIn: string; tokenOut: string };
     enforced?: { amountOutMin: string; deadline: number; path: `0x${string}`[] };
     logsSummary: string[];
+    workflowPath?: string[]; // Added workflowPath
   } | null;
   trace: any[];
 };
