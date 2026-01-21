@@ -1,3 +1,9 @@
+import {
+  Facilitator,
+  CronosNetwork,
+  Contract,
+  PaymentRequirements
+} from "@crypto.com/facilitator-client";
 import { randomBytes } from "crypto";
 import { createPublicClient, http, parseAbi } from "viem";
 import { z } from "zod";
@@ -5,12 +11,11 @@ import {
   CHAIN_ID,
   CRONOS_NETWORK,
   CRONOS_RPC_URL,
-  FACILITATOR_BASE_URL,
   SELLER_ADDRESS,
   USDC_E,
 } from "./constants";
+import { fetchJsonWithRetry } from "./http"; // Kept if needed, but SDK handles http
 import type { X402DecodedPaymentHeader, X402PaymentRequirements } from "./types";
-import { fetchJsonWithRetry } from "./http";
 
 const ERC20NameAbi = parseAbi(["function name() view returns (string)"]);
 
@@ -22,77 +27,67 @@ export const RequirementsReqSchema = z.object({
 export const SettleReqSchema = z.object({
   intentId: z.string().min(6), // required for payment keying
   paymentHeader: z.string(), // base64 string
-  paymentRequirements: z.object({
-    scheme: z.literal("exact"),
-    network: z.union([z.literal("cronos-testnet"), z.literal("cronos-mainnet")]),
-    payTo: z.string(),
-    asset: z.string(),
-    maxAmountRequired: z.string(),
-    maxTimeoutSeconds: z.number(),
-  }),
+  // We relax validation slightly to allow passing through whatever the client sends back
+  // but ultimately the SDK validates it.
+  paymentRequirements: z.any(),
 });
 
-type FacilitatorVerifyResponse = { isValid: boolean; invalidReason: string | null };
-type FacilitatorSettleResponse =
-  | {
-    x402Version: 1;
-    event: "payment.settled";
-    txHash: `0x${string}`;
-    from: `0x${string}`;
-    to: `0x${string}`;
-    value: string;
-    blockNumber: number;
-    network: string;
-    timestamp: string;
-  }
-  | {
-    x402Version: 1;
-    event: "payment.failed";
-    network: string;
-    error?: string;
-    message?: string;
-  };
+// Configure SDK
+const sdkNetwork = CRONOS_NETWORK === "cronos-mainnet"
+  ? CronosNetwork.CronosMainnet
+  : CronosNetwork.CronosTestnet;
 
-// In-memory “idempotency”: nonce -> settled response
-const settledCache = new Map<string, FacilitatorSettleResponse>();
+const facilitator = new Facilitator({
+  network: sdkNetwork,
+});
 
+/*
+ * Uses SDK to build requirements (standardized).
+ * Still manually constructs EIP-712 Typed Data for the client to sign,
+ * because the SDK's generatePaymentHeader requires a server-side signer.
+ */
 export async function buildPaymentRequirements(amount: string): Promise<{
   requirements: X402PaymentRequirements;
   typedData: any;
   nonce: `0x${string}`;
 }> {
   if (!SELLER_ADDRESS) throw new Error("SELLER_ADDRESS not set");
-  const asset = USDC_E[CRONOS_NETWORK];
 
+  // SDK Asset Contract
+  const assetContract = sdkNetwork === CronosNetwork.CronosMainnet
+    ? Contract.USDCe
+    : Contract.DevUSDCe;
+
+  // Use SDK to generate the requirements object
+  // output is PaymentRequirements interface from SDK
+  const sdkReqs = facilitator.generatePaymentRequirements({
+    payTo: SELLER_ADDRESS,
+    asset: assetContract,
+    description: "Agent Verification Fee",
+    maxAmountRequired: amount,
+    maxTimeoutSeconds: 300,
+  });
+
+  // Fetch token name for EIP-712 domain
+  // We could hardcode "USDC" but fetching is safer
+  // We use our existing viem client for this light read
   const client = createPublicClient({ transport: http(CRONOS_RPC_URL) });
   const tokenName = await client.readContract({
-    address: asset,
+    address: sdkReqs.asset as `0x${string}`,
     abi: ERC20NameAbi,
     functionName: "name",
   });
 
   const now = Math.floor(Date.now() / 1000);
-  const validAfter = 0;
-  const validBefore = now + 60; // 60s one-time window
   const nonce = (`0x${randomBytes(32).toString("hex")}`) as `0x${string}`;
 
-  const requirements: X402PaymentRequirements = {
-    scheme: "exact",
-    network: CRONOS_NETWORK,
-    payTo: SELLER_ADDRESS,
-    asset,
-    maxAmountRequired: amount,
-    maxTimeoutSeconds: 300,
-  };
-
   // EIP-3009 TransferWithAuthorization typed data
-  // NOTE: version is commonly "1" for many ERC3009 tokens; we keep it simple for demo.
   const typedData = {
     domain: {
       name: tokenName,
       version: "1",
       chainId: CHAIN_ID[CRONOS_NETWORK],
-      verifyingContract: asset,
+      verifyingContract: sdkReqs.asset,
     },
     types: {
       TransferWithAuthorization: [
@@ -106,64 +101,57 @@ export async function buildPaymentRequirements(amount: string): Promise<{
     },
     primaryType: "TransferWithAuthorization",
     message: {
-      // from is filled client-side once we know wallet address
+      // from is filled client-side
       from: "0x0000000000000000000000000000000000000000",
-      to: SELLER_ADDRESS,
-      value: amount,
-      validAfter,
-      validBefore,
+      to: sdkReqs.payTo,
+      value: sdkReqs.maxAmountRequired,
+      validAfter: 0,
+      validBefore: now + 60, // 60s
       nonce,
     },
   };
 
-  return { requirements, typedData, nonce };
+  return {
+    requirements: sdkReqs as unknown as X402PaymentRequirements,
+    typedData,
+    nonce
+  };
 }
 
 export function encodePaymentHeader(decoded: X402DecodedPaymentHeader): string {
   return Buffer.from(JSON.stringify(decoded), "utf8").toString("base64");
 }
 
+/*
+ * Uses SDK to verify and settle.
+ */
 export async function verifyAndSettle(payload: {
   paymentHeader: string;
-  paymentRequirements: X402PaymentRequirements;
-}): Promise<{ verify: FacilitatorVerifyResponse; settle?: FacilitatorSettleResponse }> {
-  const decoded = JSON.parse(Buffer.from(payload.paymentHeader, "base64").toString("utf8")) as X402DecodedPaymentHeader;
-  const nonce = decoded?.payload?.nonce;
+  paymentRequirements: PaymentRequirements;
+}): Promise<{ verify: any; settle?: any }> {
 
-  if (nonce && settledCache.has(nonce)) {
-    return { verify: { isValid: true, invalidReason: null }, settle: settledCache.get(nonce)! };
+  // SDK: Verify
+  const requestBody = facilitator.buildVerifyRequest(payload.paymentHeader, payload.paymentRequirements);
+  const verify = await facilitator.verifyPayment(requestBody);
+
+  if (!verify.isValid) {
+    return { verify };
   }
 
-  const body = {
-    x402Version: 1,
-    paymentHeader: payload.paymentHeader,
-    paymentRequirements: payload.paymentRequirements,
-  };
-
-  const verify = await fetchJsonWithRetry<FacilitatorVerifyResponse>(
-    `${FACILITATOR_BASE_URL}/v2/x402/verify`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X402-Version": "1" },
-      body: JSON.stringify(body),
-    },
-    { retries: 1, timeoutMs: 12_000 }
-  );
-
-  if (!verify.data.isValid) {
-    return { verify: verify.data };
+  // SDK: Settle
+  try {
+    const settle = await facilitator.settlePayment(requestBody);
+    return { verify, settle };
+  } catch (err: any) {
+    // Basic error wrapping if settlement fails (e.g. timeout or internal error)
+    return {
+      verify,
+      settle: {
+        x402Version: 1,
+        event: "payment.failed",
+        network: sdkNetwork,
+        error: err.message || "Unknown settlement error"
+      }
+    };
   }
-
-  const settle = await fetchJsonWithRetry<FacilitatorSettleResponse>(
-    `${FACILITATOR_BASE_URL}/v2/x402/settle`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X402-Version": "1" },
-      body: JSON.stringify(body),
-    },
-    { retries: 2, timeoutMs: 20_000 }
-  );
-
-  if (nonce) settledCache.set(nonce, settle.data);
-  return { verify: verify.data, settle: settle.data };
 }

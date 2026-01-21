@@ -1,10 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createWalletClient, createPublicClient, custom, http } from "viem";
 import { encodePaymentHeaderClient } from "@/lib/x402-client";
 import { ERC20_ABI } from "@/lib/abi/erc20";
 import { V2_ROUTER_ABI } from "@/lib/abi/router";
+import ConnectBar from "@/components/ConnectBar";
 
 function Tabs({
   tab,
@@ -19,7 +20,7 @@ function Tabs({
         <button
           key={t}
           onClick={() => setTab(t)}
-          className={`px-3 py-1 rounded border ${tab === t ? "bg-black text-white" : ""
+          className={`px-3 py-1 rounded-full border text-xs font-medium transition-colors ${tab === t ? "bg-white text-black border-white" : "border-gray-700 text-gray-400 hover:text-white"
             }`}
         >
           {t.toUpperCase()}
@@ -30,33 +31,65 @@ function Tabs({
 }
 
 export default function Page() {
+  // --- 1. Wallet State ---
+  const [wallet, setWallet] = useState<{ address: string; chainId: number } | null>(null);
+
+  // --- 2. Run / Input State ---
   const [prompt, setPrompt] = useState("Swap 10 USDC.e to WCRO");
   const [dryRun, setDryRun] = useState(true);
   const [simulateRpcDown, setSimulateRpcDown] = useState(false);
+
+  // The 'active' run logic
+  const [runReceipt, setRunReceipt] = useState<any>(null); // The currently viewed/active receipt
+  const [payOut, setPayOut] = useState<any>(null); // Payment result for the active run
   const [loading, setLoading] = useState(false);
-
-  const [lastRunPrompt, setLastRunPrompt] = useState("");
-
-  const [runReceipt, setRunReceipt] = useState<any>(null);
-  const [payOut, setPayOut] = useState<any>(null);
-  const [tab, setTab] = useState<"summary" | "trace" | "json">("summary");
   const [err, setErr] = useState<string | null>(null);
 
+  // History
+  const [runs, setRuns] = useState<any[]>([]);
+  const [lastRunPrompt, setLastRunPrompt] = useState("");
+
+  const [tab, setTab] = useState<"summary" | "trace" | "json">("summary");
+
+  // Load from local storage
+  useEffect(() => {
+    const saved = localStorage.getItem("cronoguard:runs");
+    if (saved) {
+      try {
+        setRuns(JSON.parse(saved));
+      } catch { }
+    }
+  }, []);
+
+  // Save to local storage whenever runs change
+  useEffect(() => {
+    localStorage.setItem("cronoguard:runs", JSON.stringify(runs));
+  }, [runs]);
+
+  // Derived state
   const intentId = runReceipt?.intent?.id;
-
-  // Preflight Gate: Block payment if preflight failed
   const preflightOk = runReceipt?.preflight?.ok;
-  const canPay = useMemo(() => !!intentId && !dryRun && preflightOk, [intentId, dryRun, preflightOk]);
 
-  async function run(simulateExpired = false) {
+  // Gating Logic
+  const isCorrectNetwork = wallet?.chainId === 338;
+  const canPay = !!intentId && !dryRun && preflightOk && !!wallet && isCorrectNetwork;
+
+  // Check if we are PAID or it's a dry run
+  const isPaid = !!runReceipt?.payment?.ok;
+  // Execution requires: intent, preflight ok, wallet, network, AND (paid OR dryRun)
+  const canExecute = !!intentId && preflightOk && !!wallet && isCorrectNetwork && (isPaid || dryRun);
+
+
+  // --- Actions ---
+
+  async function runPlanAndPreflight(simulateExpired = false) {
     setErr(null);
     setPayOut(null);
     setLoading(true);
     try {
       const body: any = { dryRun, simulateRpcDown, simulateExpired };
 
-      // If prompt hasn't changed and we have an intent, try to resume/execute it
-      // This is critical for the "Pay -> Run (Real)" flow
+      // Resume logic
       if (prompt === lastRunPrompt && runReceipt?.intent && !simulateExpired) {
         body.intent = runReceipt.intent;
       } else {
@@ -71,7 +104,21 @@ export default function Page() {
       });
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(JSON.stringify(data));
-      setRunReceipt(data.runReceipt);
+
+      const newReceipt = data.runReceipt;
+      setRunReceipt(newReceipt);
+
+      // Upsert into runs list (match by intent.id, or prepend new)
+      setRuns(prev => {
+        const idx = prev.findIndex(r => r.intent?.id === newReceipt.intent?.id);
+        if (idx >= 0) {
+          const copy = [...prev];
+          copy[idx] = newReceipt;
+          return copy;
+        }
+        return [newReceipt, ...prev].slice(0, 50); // limit 50
+      });
+
     } catch (e: any) {
       setErr(e?.message ?? String(e));
     } finally {
@@ -81,11 +128,7 @@ export default function Page() {
 
   async function payAgentFee() {
     setErr(null);
-    setPayOut(null);
-
-    if (!intentId) return setErr("Run first to generate intentId.");
-    if (!preflightOk) return setErr("Preflight checks must pass before payment.");
-    if (!window.ethereum) return setErr("No injected wallet found (MetaMask/Rabby).");
+    if (!canPay) return;
 
     try {
       setLoading(true);
@@ -102,13 +145,13 @@ export default function Page() {
 
       if (!req.ok) throw new Error(JSON.stringify(req));
 
-      const wallet = createWalletClient({ transport: custom(window.ethereum as any) });
-      const [from] = await wallet.requestAddresses();
+      const walletClient = createWalletClient({ transport: custom(window.ethereum as any) });
+      const [from] = await walletClient.requestAddresses();
 
       const typed = req.typedData;
       typed.message.from = from;
 
-      const signature = await wallet.signTypedData({
+      const signature = await walletClient.signTypedData({
         domain: typed.domain,
         types: typed.types,
         primaryType: typed.primaryType,
@@ -143,7 +186,13 @@ export default function Page() {
         }),
       }).then((r) => r.json());
 
+      if (!settle.ok) throw new Error(settle.error || "Payment failed");
+
       setPayOut(settle);
+
+      // Auto-refresh the run to get updated receipt with payment
+      await runPlanAndPreflight();
+
     } catch (e: any) {
       setErr(e?.message ?? String(e));
     } finally {
@@ -153,24 +202,15 @@ export default function Page() {
 
   async function executeOnChain() {
     setErr(null);
-    if (!window.ethereum) return setErr("No injected wallet found.");
-
-    if (!runReceipt?.intent || !runReceipt?.preflight) {
-      return setErr("Run first so intent + preflight exist.");
-    }
-
-    // Ensure preflight passed
-    if (!runReceipt.preflight.ok) {
-      return setErr("Preflight failed. Cannot execute.");
-    }
+    if (!canExecute) return;
 
     setLoading(true);
     try {
-      const wallet = createWalletClient({
+      const walletClient = createWalletClient({
         transport: custom(window.ethereum as any),
         chain: undefined as any,
       });
-      const [user] = await wallet.requestAddresses();
+      const [user] = await walletClient.requestAddresses();
 
       // Prepare deterministic payload (server enforces minOut)
       const prep = await fetch("/api/prepare", {
@@ -185,19 +225,8 @@ export default function Page() {
 
       if (!prep.ok) throw new Error(JSON.stringify(prep));
 
-      const p = prep.payload as {
-        router: `0x${string}`;
-        tokenIn: `0x${string}`;
-        tokenOut: `0x${string}`;
-        amountIn: string;
-        amountOutMin: string;
-        path: `0x${string}`[];
-        to: `0x${string}`;
-        deadline: number;
-        intentId: string;
-      };
-
-      const rpc = process.env.NEXT_PUBLIC_CRONOS_RPC_URL || runReceipt.intent?.chain?.rpcUrl || "https://evm-t3.cronos.org";
+      const p = prep.payload;
+      const rpc = process.env.NEXT_PUBLIC_CRONOS_RPC_URL || "https://evm-t3.cronos.org";
       const publicClient = createPublicClient({ transport: http(rpc) });
 
       // Before balances
@@ -229,7 +258,7 @@ export default function Page() {
       const amountIn = BigInt(p.amountIn);
       if (allowance < amountIn) {
         workflowPath.push("approve");
-        approveTxHash = await wallet.writeContract({
+        approveTxHash = await walletClient.writeContract({
           address: p.tokenIn,
           abi: ERC20_ABI,
           functionName: "approve",
@@ -246,7 +275,7 @@ export default function Page() {
       workflowPath.push("swap");
 
       // Swap
-      const swapTxHash = await wallet.writeContract({
+      const swapTxHash = await walletClient.writeContract({
         address: p.router,
         abi: V2_ROUTER_ABI,
         functionName: "swapExactTokensForTokens",
@@ -307,11 +336,23 @@ export default function Page() {
             deadline: p.deadline,
             path: p.path,
           },
-          workflowPath, // Added workflowPath
+          workflowPath,
         },
       };
 
       setRunReceipt(updated);
+
+      // Update history
+      setRuns(prev => {
+        const idx = prev.findIndex(r => r.intent?.id === updated.intent?.id);
+        if (idx >= 0) {
+          const copy = [...prev];
+          copy[idx] = updated;
+          return copy;
+        }
+        return [updated, ...prev].slice(0, 50);
+      });
+
     } catch (e: any) {
       setErr(e?.message ?? String(e));
     } finally {
@@ -319,12 +360,13 @@ export default function Page() {
     }
   }
 
+  // --- View Calculation ---
   const summary = runReceipt
     ? {
       intentId: runReceipt.intent?.id,
       policyAllowed: runReceipt.policy?.allowed,
       preflightOk: runReceipt.preflight?.ok,
-      risk: runReceipt.risk, // Added Risk
+      risk: runReceipt.risk,
       quote: {
         expectedOut: runReceipt.preflight?.quote?.expectedOut ?? null,
         minOut: runReceipt.preflight?.quote?.minOut ?? null,
@@ -336,171 +378,243 @@ export default function Page() {
         beforeBalances: runReceipt.execution.beforeBalances,
         afterBalances: runReceipt.execution.afterBalances,
         enforced: runReceipt.execution.enforced,
-        workflowPath: runReceipt.execution.workflowPath, // Added to summary
+        workflowPath: runReceipt.execution.workflowPath,
       } : null,
       dryRun: runReceipt.dryRun,
     }
     : null;
 
   return (
-    <main className="min-h-screen p-6 max-w-4xl mx-auto space-y-4">
-      <header className="space-y-1">
-        <h1 className="text-2xl font-semibold">x402 Guarded Agent Wallet</h1>
-        <p className="text-sm opacity-80">
-          Operational flow: Run → (optional Pay) → Run again (real mode gate)
-        </p>
-      </header>
+    <div className="min-h-screen bg-[#111] text-gray-200 p-4">
+      <div className="max-w-7xl mx-auto space-y-6">
 
-      <section className="space-y-2">
-        <label className="text-sm font-medium">Prompt</label>
-        <textarea
-          className="w-full border rounded p-3 min-h-[90px]"
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          disabled={loading}
-        />
-        <div className="flex items-center gap-3">
-          <button
-            className="px-4 py-2 rounded bg-black text-white disabled:opacity-50"
-            onClick={() => run()}
-            disabled={loading}
-          >
-            {loading ? "Running..." : "Run (Plan→Preflight→Execute)"}
-          </button>
-
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={dryRun}
-              onChange={(e) => setDryRun(e.target.checked)}
-              disabled={loading}
-            />
-            Dry-run only (no payment)
-          </label>
-
-          <button
-            className="px-4 py-2 rounded border disabled:opacity-50 disabled:bg-gray-100 disabled:cursor-not-allowed"
-            onClick={payAgentFee}
-            disabled={loading || !canPay}
-            title={
-              !preflightOk
-                ? "Preflight check failed. Cannot pay."
-                : dryRun
-                  ? "Disable dry-run to enable payment"
-                  : "Pay agent fee via x402"
-            }
-          >
-            Pay agent fee (x402)
-          </button>
-
-          <button
-            className="px-4 py-2 rounded border disabled:opacity-50"
-            disabled={loading || dryRun}
-            onClick={executeOnChain}
-            title={dryRun ? "Disable dry-run to enable real execution" : "Client-signed approve+swap"}
-          >
-            Execute swap (client-signed)
-          </button>
-        </div>
-
-        <div className="flex items-center gap-4 pt-2">
-          <div className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              id="simulateRpcDown"
-              checked={simulateRpcDown}
-              onChange={(e) => setSimulateRpcDown(e.target.checked)}
-              disabled={loading}
-            />
-            <label htmlFor="simulateRpcDown" className="text-xs text-gray-500">Simulate RPC Down</label>
+        {/* TOP BAR: Header + Connect */}
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-xl font-bold tracking-tight text-white">CronoGuard <span className="text-gray-500 font-normal">Control Tower</span></h1>
+            <p className="text-xs text-gray-500">Guard Agent Execution (x402) · Preflight → Pay → Execute</p>
           </div>
-
-          <button
-            className="text-xs text-gray-500 underline"
-            onClick={() => {
-              // Forced expired run
-              run(true);
-            }}
-            disabled={loading}
-            title="Sets usage deadline to past"
-          >
-            Simulate Expired Intent (Dev)
-          </button>
-
-          {/* Download Receipt Button */}
-          {runReceipt && (
-            <button
-              className="text-xs text-blue-600 underline ml-4"
-              onClick={() => {
-                const blob = new Blob([JSON.stringify(runReceipt, null, 2)], { type: "application/json" });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement("a");
-                a.href = url;
-                a.download = `receipt-${intentId || "unknown"}.json`;
-                a.click();
-              }}
-            >
-              Download Receipt (JSON)
-            </button>
-          )}
+          <ConnectBar onAccount={setWallet} />
         </div>
-      </section>
 
 
-      {err && (
-        <pre className="p-3 bg-red-50 border border-red-200 rounded text-xs overflow-auto">
-          {err}
-        </pre>
-      )}
+        {/* MAIN LAYOUT: 2 Columns */}
+        <div className="grid grid-cols-12 gap-6 items-start">
 
-      {runReceipt && (
-        <section className="border rounded p-4 space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="text-sm font-semibold">
-                RunReceipt (intentId: <span className="font-mono">{intentId}</span>)
+          {/* LEFT COLUMN: Controls + History (4 cols) */}
+          <div className="col-span-12 md:col-span-4 space-y-4">
+
+            {/* 1. Control Panel */}
+            <div className="panel p-4 space-y-4">
+              <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider">New Action</h2>
+
+              <div className="space-y-1">
+                <label className="text-xs text-gray-500">Prompt</label>
+                <textarea
+                  className="w-full bg-black/40 border border-gray-800 rounded-lg p-3 text-sm focus:border-blue-500 outline-none transition-colors"
+                  rows={3}
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  disabled={loading}
+                />
               </div>
-              {/* Risk Badge */}
-              {runReceipt.risk && (
-                <div className={`text-xs px-2 py-0.5 rounded border ${runReceipt.risk.score > 50 ? 'bg-red-100 border-red-300 text-red-800' :
-                  runReceipt.risk.score > 20 ? 'bg-yellow-100 border-yellow-300 text-yellow-800' :
-                    'bg-green-100 border-green-300 text-green-800'
-                  }`}>
-                  Risk: {runReceipt.risk.score}/100
-                </div>
-              )}
+
+              <div className="flex items-center gap-3">
+                <button
+                  className={`flex-1 py-2 rounded-lg text-sm font-medium border transition-all ${loading ? "opacity-50" : "bg-blue-600 border-blue-500 text-white hover:bg-blue-500"
+                    }`}
+                  onClick={() => runPlanAndPreflight()}
+                  disabled={loading}
+                >
+                  {loading ? "..." : "1. Run Preflight"}
+                </button>
+              </div>
+
+              <div className="flex items-center justify-between text-xs text-gray-500 pt-2 border-t border-gray-800">
+                <label className="flex items-center gap-2 cursor-pointer hover:text-gray-300">
+                  <input type="checkbox" checked={dryRun} onChange={e => setDryRun(e.target.checked)} />
+                  Dry Run
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer hover:text-gray-300">
+                  <input type="checkbox" checked={simulateRpcDown} onChange={e => setSimulateRpcDown(e.target.checked)} />
+                  Simulate RPC Fail
+                </label>
+              </div>
             </div>
-            <Tabs tab={tab} setTab={setTab} />
+
+            {/* 2. Runs List */}
+            <div className="panel p-0 overflow-hidden">
+              <div className="p-3 border-b border-gray-800 bg-black/20 flex justify-between items-center">
+                <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider">History</h2>
+                <span className="text-xs text-gray-600">{runs.length} runs</span>
+              </div>
+              <div className="max-h-[500px] overflow-y-auto">
+                {runs.length === 0 && (
+                  <div className="p-8 text-center text-xs text-gray-600 italic">No runs yet</div>
+                )}
+                {runs.map((r, i) => {
+                  const rid = r.intent?.id;
+                  const rRisk = r.risk?.score ?? 0;
+                  const isActive = rid === runReceipt?.intent?.id;
+                  const status = r.execution?.status === 'success' ? 'EXECUTED'
+                    : r.payment?.ok ? 'PAID'
+                      : r.preflight?.ok ? 'READY'
+                        : 'FAILED';
+
+                  return (
+                    <div
+                      key={rid || i}
+                      onClick={() => setRunReceipt(r)}
+                      className={`p-3 border-b border-gray-800 cursor-pointer hover:bg-white/5 transition-colors ${isActive ? "bg-white/5 border-l-2 border-l-blue-500" : "border-l-2 border-l-transparent"}`}
+                    >
+                      <div className="flex justify-between items-start mb-1">
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${status === 'EXECUTED' ? 'bg-green-900/30 text-green-400' :
+                            status === 'FAILED' ? 'bg-red-900/30 text-red-400' :
+                              'bg-blue-900/30 text-blue-400'
+                          }`}>{status}</span>
+                        <span className="text-[10px] text-gray-500 font-mono">
+                          {rid?.slice(0, 8)}
+                        </span>
+                      </div>
+                      <div className="text-xs text-gray-300 line-clamp-2 mb-2 opacity-80">
+                        {((r.intent as any)?.params?.tokenIn) ?
+                          `Swap ${(r.intent as any).params.amountIn} to ${(r.intent as any).params.tokenOut}`
+                          : "Unknown Intent"}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {/* Risk Dot */}
+                        <div className={`flex items-center gap-1 text-[10px] ${rRisk > 50 ? 'text-red-400' : rRisk > 20 ? 'text-yellow-400' : 'text-green-400'
+                          }`}>
+                          <div className={`w-1.5 h-1.5 rounded-full ${rRisk > 50 ? 'bg-red-500' : rRisk > 20 ? 'bg-yellow-500' : 'bg-green-500'
+                            }`} />
+                          Risk {rRisk}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
           </div>
 
-          {tab === "summary" && (
-            <pre className="text-xs overflow-auto bg-black text-white border rounded p-3">
-              {JSON.stringify(summary, null, 2)}
-            </pre>
-          )}
+          {/* RIGHT COLUMN: Details (8 cols) */}
+          <div className="col-span-12 md:col-span-8 space-y-4">
 
-          {tab === "trace" && (
-            <pre className="text-xs overflow-auto bg-black text-white border rounded p-3">
-              {JSON.stringify(runReceipt.trace, null, 2)}
-            </pre>
-          )}
+            {err && (
+              <div className="p-3 bg-red-900/20 border border-red-800/50 rounded-xl text-red-200 text-xs font-mono">
+                {err}
+              </div>
+            )}
 
-          {tab === "json" && (
-            <pre className="text-xs overflow-auto bg-black text-white border rounded p-3">
-              {JSON.stringify(runReceipt, null, 2)}
-            </pre>
-          )}
-        </section>
-      )}
+            {runReceipt ? (
+              <>
+                {/* Action Bar for Selected Run */}
+                <div className="panel p-4 flex flex-wrap items-center gap-4 justify-between bg-black/40">
 
-      {payOut && (
-        <section className="border rounded p-4">
-          <div className="text-sm font-semibold mb-2">Pay result</div>
-          <pre className="text-xs overflow-auto bg-black text-white border rounded p-3">
-            {JSON.stringify(payOut, null, 2)}
-          </pre>
-        </section>
-      )}
-    </main>
+                  <div className="flex items-center gap-4">
+                    <div className="text-sm font-medium text-gray-300">
+                      Intent <span className="font-mono text-gray-500">{intentId?.slice(0, 8)}...</span>
+                    </div>
+                    {/* Risk Badge Big */}
+                    {runReceipt.risk && (
+                      <div className={`px-2 py-1 rounded text-xs font-bold border ${runReceipt.risk.score > 50 ? 'bg-red-900/20 border-red-800 text-red-400' :
+                          runReceipt.risk.score > 20 ? 'bg-yellow-900/20 border-yellow-800 text-yellow-400' :
+                            'bg-green-900/20 border-green-800 text-green-400'
+                        }`}>
+                        RISK SCORE: {runReceipt.risk.score}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {/* Step 2: Pay */}
+                    <button
+                      onClick={payAgentFee}
+                      disabled={loading || !canPay || isPaid}
+                      className={`px-4 py-2 rounded-lg text-xs font-medium border transition-all ${isPaid ? "bg-green-900/20 border-green-800 text-green-400 opacity-50 cursor-default" :
+                          canPay ? "bg-black hover:bg-gray-900 border-gray-600 text-white" :
+                            "bg-transparent border-gray-800 text-gray-600 cursor-not-allowed"
+                        }`}
+                    >
+                      {loading ? "..." : isPaid ? "2. Paid ✅" : "2. Pay (x402)"}
+                    </button>
+
+                    {/* Step 3: Execute */}
+                    <button
+                      onClick={executeOnChain}
+                      disabled={loading || !canExecute}
+                      className={`px-4 py-2 rounded-lg text-xs font-medium border transition-all ${canExecute ? "bg-blue-600 border-blue-500 text-white hover:bg-blue-500 shadow-lg shadow-blue-900/20" :
+                          "bg-transparent border-gray-800 text-gray-600 cursor-not-allowed"
+                        }`}
+                    >
+                      {loading ? "Executing..." : "3. Execute Swap"}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Tabs & Content */}
+                <div className="panel p-0 overflow-hidden min-h-[400px]">
+                  <div className="border-b border-gray-800 bg-black/20 p-3 flex justify-between items-center">
+                    <Tabs tab={tab} setTab={setTab} />
+                    <button
+                      className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                      onClick={() => {
+                        const blob = new Blob([JSON.stringify(runReceipt, null, 2)], { type: "application/json" });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement("a");
+                        a.href = url;
+                        a.download = `receipt-${intentId || "unknown"}.json`;
+                        a.click();
+                      }}
+                    >
+                      Download JSON
+                    </button>
+                  </div>
+
+                  <div className="p-0">
+                    {tab === "summary" && (
+                      <div className="p-4 font-mono text-xs text-gray-300 whitespace-pre-wrap overflow-auto max-h-[500px]">
+                        {JSON.stringify(summary, null, 2)}
+                      </div>
+                    )}
+                    {tab === "trace" && (
+                      <div className="font-mono text-xs">
+                        {runReceipt.trace?.map((t: any, i: number) => (
+                          <div key={i} className={`p-2 border-b border-gray-800/50 flex gap-3 ${!t.ok ? "bg-red-900/10" : "hover:bg-white/5"
+                            }`}>
+                            <span className="text-gray-600 w-24 shrink-0">
+                              {new Date(t.tsUnix * 1000).toLocaleTimeString()}
+                            </span>
+                            <span className={`w-20 shrink-0 font-bold ${t.ok ? "text-green-500" : "text-red-500"}`}>
+                              {t.step.toUpperCase()}
+                            </span>
+                            <span className="text-gray-300">{t.message}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {tab === "json" && (
+                      <div className="p-4 font-mono text-xs text-gray-400 whitespace-pre-wrap overflow-auto max-h-[500px]">
+                        {JSON.stringify(runReceipt, null, 2)}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="panel p-12 flex flex-col items-center justify-center text-gray-600 space-y-4">
+                <div className="w-16 h-16 rounded-full bg-gray-900 flex items-center justify-center text-2xl">
+                  ⚡️
+                </div>
+                <p>Select a run or create a new one to see details.</p>
+              </div>
+            )}
+
+          </div>
+        </div>
+
+      </div>
+    </div>
   );
 }
