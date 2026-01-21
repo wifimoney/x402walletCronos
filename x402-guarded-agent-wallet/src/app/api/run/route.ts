@@ -14,6 +14,7 @@ const BodySchema = z.object({
     simulateRpcDown: z.boolean().optional(),
     simulateExpired: z.boolean().optional(),
     recipient: z.string().optional(),
+    walletAddress: z.string().regex(/^0x[a-fA-F0-9]{40}$/).optional(),
 });
 
 export async function POST(req: Request) {
@@ -107,7 +108,8 @@ export async function POST(req: Request) {
 
     // 4. Preflight
     t.push(trace("preflight", true, "Running preflight checks..."));
-    const preflight = await runPreflight(intent);
+    const walletAddress = parsed.data.walletAddress as `0x${string}` | undefined;
+    const preflight = await runPreflight(intent, { walletAddress });
     t.push(trace("preflight", preflight.ok, preflight.ok ? "Preflight OK" : `Preflight failed: ${preflight.error ?? "unknown"}`));
 
     // Evaluate Risk (always happen)
@@ -164,7 +166,7 @@ export async function POST(req: Request) {
         txHash: dryRun ? "dry-run" : "stub",
         status: "success" as const,
         logsSummary: [
-            dryRun ? `Dry-run quote: ${preflight.quote?.expectedOut}` : "Real execution ready (client-side sign needed)"
+            dryRun ? `Dry-run balance: ${preflight.data?.balance}` : "Real execution ready (client-side sign needed)"
         ],
     };
 

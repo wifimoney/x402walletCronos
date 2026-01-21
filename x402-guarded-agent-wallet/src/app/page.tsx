@@ -104,6 +104,11 @@ export default function Page() {
     try {
       const body: any = { dryRun, simulateRpcDown, simulateExpired };
 
+      // Pass wallet address for balance checking
+      if (wallet?.address) {
+        body.walletAddress = wallet.address;
+      }
+
       // Resume logic
       if (prompt === lastRunPrompt && runReceipt?.intent && !simulateExpired) {
         body.intent = runReceipt.intent;

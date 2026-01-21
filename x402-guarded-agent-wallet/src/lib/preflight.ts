@@ -28,7 +28,7 @@ export const PreflightInputSchema = z.object({
   }),
 });
 
-export async function runPreflight(intent: ActionIntent): Promise<PreflightReceipt> {
+export async function runPreflight(intent: ActionIntent, opts?: { walletAddress?: `0x${string}` }): Promise<PreflightReceipt> {
   const ts = Date.now();
 
   const receipt: PreflightReceipt = {
@@ -111,16 +111,37 @@ export async function runPreflight(intent: ActionIntent): Promise<PreflightRecei
         functionName: "decimals",
       });
 
-      // We'll set a placeholder simulation valid.
-      // In a real app, you'd pass the user address to preflight to check actual allowance/balance.
+      // Check actual balance if wallet address is provided
+      let balanceStr = "unknown (wallet not connected in preflight)";
+      let sufficient = true; // assume true unless we can check
+
+      if (opts?.walletAddress && isAddress(opts.walletAddress)) {
+        try {
+          const balance = await client.readContract({
+            address: token,
+            abi: Erc20Abi,
+            functionName: "balanceOf",
+            args: [opts.walletAddress],
+          }) as bigint;
+
+          balanceStr = balance.toString();
+          sufficient = balance >= amount;
+        } catch (e) {
+          balanceStr = "error reading balance";
+          sufficient = false;
+        }
+      }
+
       receipt.data = {
-        balance: "unknown (wallet not connected in preflight)",
-        sufficient: true // assume true for preflight unless we know otherwise
+        balance: balanceStr,
+        sufficient,
       };
 
       receipt.simulation = {
         success: true,
-        notes: "Token contract verified. Balance check deferred to execution.",
+        notes: opts?.walletAddress
+          ? `Token contract verified. Balance: ${balanceStr}, Sufficient: ${sufficient}`
+          : "Token contract verified. Balance check deferred to execution.",
         revertReason: null,
       };
 
