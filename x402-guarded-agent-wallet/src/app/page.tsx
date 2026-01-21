@@ -1,11 +1,24 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { createWalletClient, createPublicClient, custom, http } from "viem";
+import { createWalletClient, createPublicClient, custom, http, defineChain } from "viem";
 import { encodePaymentHeaderClient } from "@/lib/x402-client";
 import { ERC20_ABI } from "@/lib/abi/erc20";
 import { V2_ROUTER_ABI } from "@/lib/abi/router";
 import ConnectBar from "@/components/ConnectBar";
+
+// Define Cronos Testnet chain
+const cronosTestnet = defineChain({
+  id: 338,
+  name: 'Cronos Testnet',
+  nativeCurrency: { name: 'Cronos', symbol: 'TCRO', decimals: 18 },
+  rpcUrls: {
+    default: { http: ['https://evm-t3.cronos.org'] },
+  },
+  blockExplorers: {
+    default: { name: 'Cronos Explorer', url: 'https://explorer.cronos.org/testnet' },
+  },
+});
 
 function Tabs({
   tab,
@@ -263,7 +276,7 @@ export default function Page() {
           recipientAddress,
           amount,
         ],
-        chain: undefined as any,
+        chain: cronosTestnet,
         account: user,
       });
 
