@@ -16,6 +16,15 @@ const BodySchema = z.object({
     recipient: z.string().optional(),
     walletAddress: z.string().regex(/^0x[a-fA-F0-9]{40}$/).optional(),
     forceNew: z.boolean().optional(),
+    // Client-side payment record for Vercel persistence (serverless memory resets)
+    clientPayment: z.object({
+        ok: z.boolean(),
+        txHash: z.string().optional(),
+        nonce: z.string().optional(),
+        verified: z.boolean().optional(),
+        settled: z.boolean().optional(),
+        settledTxHash: z.string().optional(),
+    }).optional(),
 });
 
 export async function POST(req: Request) {
@@ -181,8 +190,12 @@ export async function POST(req: Request) {
     let payment: any = null;
     if (!dryRun) {
         t.push(trace("pay", true, "Checking payment gate..."));
+
+        // Check server store first, then fall back to client-provided payment (for Vercel persistence)
         const paid = getPaid(intent.id);
-        if (!paid) {
+        const clientPayment = parsed.data.clientPayment;
+
+        if (!paid && !clientPayment?.ok) {
             t.push(trace("pay", false, "No payment found. Pay fee first."));
             const rr = buildRunReceipt({
                 intent,
@@ -196,15 +209,30 @@ export async function POST(req: Request) {
             });
             return NextResponse.json({ ok: true, runReceipt: rr });
         }
-        payment = {
-            ok: true,
-            txHash: paid.settledTxHash,
-            receiptId: paid.nonce,
-            verified: paid.verified,
-            settled: paid.settled,
-            settlementTxHash: paid.settledTxHash
-        };
-        t.push(trace("pay", true, `Payment found ✅ (Verified: ${paid.verified}, Settled: ${paid.settled})`));
+
+        // Use server store if available, otherwise use client payment
+        if (paid) {
+            payment = {
+                ok: true,
+                txHash: paid.settledTxHash,
+                receiptId: paid.nonce,
+                verified: paid.verified,
+                settled: paid.settled,
+                settlementTxHash: paid.settledTxHash
+            };
+            t.push(trace("pay", true, `Payment found (server) ✅ (Verified: ${paid.verified}, Settled: ${paid.settled})`));
+        } else if (clientPayment?.ok) {
+            payment = {
+                ok: true,
+                txHash: clientPayment.txHash || clientPayment.settledTxHash,
+                receiptId: clientPayment.nonce,
+                verified: clientPayment.verified ?? true,
+                settled: clientPayment.settled ?? true,
+                settlementTxHash: clientPayment.settledTxHash,
+                source: "client" // Mark as client-provided
+            };
+            t.push(trace("pay", true, `Payment restored from client ✅ (localStorage persistence)`));
+        }
     }
 
     // 6. Execution Stub / Mark Executed

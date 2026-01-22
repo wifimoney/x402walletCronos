@@ -160,6 +160,17 @@ export default function Page() {
       // Resume logic
       if (prompt === lastRunPrompt && runReceipt?.intent && !simulateExpired) {
         body.intent = runReceipt.intent;
+        // Pass client payment for Vercel persistence (serverless memory resets)
+        if (runReceipt.payment?.ok) {
+          body.clientPayment = {
+            ok: true,
+            txHash: runReceipt.payment.txHash,
+            nonce: runReceipt.payment.receiptId,
+            verified: runReceipt.payment.verified,
+            settled: runReceipt.payment.settled,
+            settledTxHash: runReceipt.payment.settlementTxHash || runReceipt.payment.txHash,
+          };
+        }
       } else {
         body.prompt = prompt;
         body.recipient = recipient; // Pass selected recipient
@@ -831,6 +842,15 @@ export default function Page() {
                                   dryRun,
                                   walletAddress: wallet?.address,
                                   forceNew: true, // Force re-evaluation to check expiry/changes
+                                  // Pass client payment for Vercel persistence
+                                  clientPayment: runReceipt.payment?.ok ? {
+                                    ok: true,
+                                    txHash: runReceipt.payment.txHash,
+                                    nonce: runReceipt.payment.receiptId,
+                                    verified: runReceipt.payment.verified,
+                                    settled: runReceipt.payment.settled,
+                                    settledTxHash: runReceipt.payment.settlementTxHash || runReceipt.payment.txHash,
+                                  } : undefined,
                                 }),
                               });
                               const data = await res.json();
