@@ -1,0 +1,6 @@
+{
+    "buildCommand": "cd x402-guarded-agent-wallet && npm run build",
+    "outputDirectory": "x402-guarded-agent-wallet/.next",
+    "installCommand": "cd x402-guarded-agent-wallet && npm install",
+    "framework": "nextjs"
+}
