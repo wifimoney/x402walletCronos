@@ -67,6 +67,16 @@ export type X402DecodedPaymentHeader = {
 
 import { RiskAnalysis } from "./risk-constants";
 
+export type PaymentReceipt = {
+  ok: boolean;
+  error?: string;
+  txHash?: string;
+  receiptId?: string;
+  verified?: boolean; // Facilitator verified signature
+  settled?: boolean;  // Facilitator settled on-chain
+  settlementTxHash?: string;
+};
+
 export type RunReceipt = {
   receiptVersion: "1.0";
   x402Version: 1;
@@ -78,7 +88,7 @@ export type RunReceipt = {
   risk?: RiskAnalysis; // Added RiskAnalysis
   preflight: PreflightReceipt;
   dryRun: boolean;
-  payment: { ok: boolean; error?: string; txHash?: string; receiptId?: string } | null;
+  payment: PaymentReceipt | null;
   x402?: {
     verify: { isValid: boolean; timestamp?: number };
     settle: { txHash?: string; link?: string; timestamp?: number };

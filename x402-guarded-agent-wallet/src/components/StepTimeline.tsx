@@ -72,7 +72,7 @@ export default function StepTimeline({ receipt }: { receipt: any }) {
             tooltip: isDryRun
                 ? "Dry-run mode - payment skipped"
                 : paymentOk
-                    ? `Settled: ${receipt.payment?.txHash?.slice(0, 10)}...`
+                    ? `Verified: ${receipt.payment?.verified ? '✅' : '❌'} • Settled: ${receipt.payment?.settled ? '✅' : '❌'}`
                     : "Awaiting payment",
         },
         {
@@ -108,9 +108,9 @@ export default function StepTimeline({ receipt }: { receipt: any }) {
                         </div>
                         {/* Label */}
                         <div className={`text-[9px] text-center mt-1 font-medium uppercase tracking-wide ${step.status === "success" ? "text-emerald-400" :
-                                step.status === "error" ? "text-red-400" :
-                                    step.status === "active" ? "text-blue-400" :
-                                        "text-gray-600"
+                            step.status === "error" ? "text-red-400" :
+                                step.status === "active" ? "text-blue-400" :
+                                    "text-gray-600"
                             }`}>
                             {step.label}
                         </div>
@@ -118,8 +118,8 @@ export default function StepTimeline({ receipt }: { receipt: any }) {
                     {/* Connector */}
                     {i < steps.length - 1 && (
                         <div className={`w-6 h-0.5 ${step.status === "success" ? "bg-emerald-500/50" :
-                                step.status === "active" ? "bg-blue-500/30" :
-                                    "bg-gray-800"
+                            step.status === "active" ? "bg-blue-500/30" :
+                                "bg-gray-800"
                             }`} />
                     )}
                 </div>

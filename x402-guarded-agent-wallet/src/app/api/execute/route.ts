@@ -122,7 +122,7 @@ export async function POST(req: Request) {
     status: "success" as const,
     logsSummary: [
       dryRun
-        ? `Dry-run: expectedOut=${preflight.quote?.expectedOut ?? "n/a"}`
+        ? `Dry-run: balance=${preflight.data?.balance ?? "n/a"}`
         : "Execution not implemented in P3",
     ],
   };

@@ -76,7 +76,38 @@ export default function Page() {
 
   const [tab, setTab] = useState<"summary" | "trace" | "json">("summary");
   const [historyFilter, setHistoryFilter] = useState<"all" | "failed" | "executed" | "dryrun">("all");
-  const [validationResult, setValidationResult] = useState<{ valid: boolean; errors: string[] } | null>(null);
+  const [validationResult, setValidationResult] = useState<any>(null);
+  const [healthStatus, setHealthStatus] = useState<{
+    ok: boolean;
+    scheme?: string;
+    network?: string;
+  } | null>(null);
+
+  // Initial startup check
+  useEffect(() => {
+    fetch("/api/health")
+      .then(res => res.json())
+      .then(data => {
+        if (data.status === "ok" && data.supported) {
+          // Assuming supported returns { schemes: [...], networks: [...] } or structure
+          // We'll just display a summary
+          setHealthStatus({
+            ok: true,
+            scheme: "x402/1.0", // Simplified for now
+            network: "cronos_testnet",
+          });
+        } else {
+          console.warn("Health check failed:", data);
+          setHealthStatus({ ok: false });
+        }
+      })
+      .catch(err => {
+        console.error("Health check error:", err);
+        setHealthStatus({ ok: false });
+      });
+  }, []);
+
+
 
   // Load from local storage
   useEffect(() => {
@@ -424,18 +455,33 @@ export default function Page() {
       <div className="max-w-[1400px] mx-auto space-y-8">
 
         {/* TOP BAR: Header + Connect */}
-        <div className="flex items-center justify-between panel-tech p-4 lg:p-6">
+        <header className="flex justify-between items-center mb-8 bg-black/40 p-4 rounded-xl border border-white/5 backdrop-blur-md">
           <div className="flex items-center gap-4">
-            <div className="w-10 h-10 rounded-full bg-blue-500/20 flex items-center justify-center border border-blue-500/30 shadow-[0_0_15px_rgba(59,130,246,0.3)]">
-              <span className="text-xl">🛡️</span>
+            <div className="bg-blue-600 w-10 h-10 rounded-lg flex items-center justify-center shadow-[0_0_15px_rgba(37,99,235,0.5)]">
+              <span className="text-xl font-bold text-white">4</span>
             </div>
             <div>
-              <h1 className="text-2xl font-bold tracking-tight text-white text-glow">CronoGuard <span className="text-blue-400 font-light">Control Tower</span></h1>
-              <p className="text-xs text-blue-300/60 uppercase tracking-widest font-mono">Agentic Execution Environment</p>
+              <h1 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-indigo-400">
+                x402 Guarded Agent Wallet
+              </h1>
+              <div className="flex items-center gap-3 text-[10px] text-gray-500 font-mono mt-1">
+                <span>CRONOS CONTROL TOWER</span>
+                {healthStatus && (
+                  <>
+                    <span className="w-px h-3 bg-gray-700"></span>
+                    <span className={`flex items-center gap-1.5 ${healthStatus.ok ? "text-emerald-500" : "text-red-500"}`}>
+                      <div className={`w-1.5 h-1.5 rounded-full ${healthStatus.ok ? "bg-emerald-500 animate-pulse" : "bg-red-500"}`}></div>
+                      {healthStatus.ok
+                        ? `NET: ${healthStatus.network} • SCHEME: ${healthStatus.scheme}`
+                        : "OFFLINE"}
+                    </span>
+                  </>
+                )}
+              </div>
             </div>
           </div>
           <ConnectBar onAccount={setWallet} />
-        </div>
+        </header>
 
         {/* MAIN LAYOUT: 2 Columns */}
         <div className="grid grid-cols-12 gap-6 items-start">
@@ -952,7 +998,7 @@ export default function Page() {
                         </div>
                         {validationResult && !validationResult.valid && (
                           <div className="p-2 bg-red-500/10 border border-red-500/30 rounded text-[10px] text-red-300 font-mono">
-                            {validationResult.errors.map((e, i) => <div key={i}>• {e}</div>)}
+                            {validationResult.errors.map((e: string, i: number) => <div key={i}>• {e}</div>)}
                           </div>
                         )}
                         <div className="font-mono text-[10px] leading-relaxed text-gray-400 whitespace-pre-wrap overflow-auto max-h-[400px]">

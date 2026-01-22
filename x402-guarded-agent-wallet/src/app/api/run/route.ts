@@ -196,8 +196,15 @@ export async function POST(req: Request) {
             });
             return NextResponse.json({ ok: true, runReceipt: rr });
         }
-        payment = { ok: true, txHash: paid.settledTxHash, receiptId: paid.nonce };
-        t.push(trace("pay", true, "Payment found ✅"));
+        payment = {
+            ok: true,
+            txHash: paid.settledTxHash,
+            receiptId: paid.nonce,
+            verified: paid.verified,
+            settled: paid.settled,
+            settlementTxHash: paid.settledTxHash
+        };
+        t.push(trace("pay", true, `Payment found ✅ (Verified: ${paid.verified}, Settled: ${paid.settled})`));
     }
 
     // 6. Execution Stub / Mark Executed

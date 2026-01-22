@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@crypto.com/facilitator-client": "^1.0.4",
+    "lucide-react": "^0.562.0",
     "nanoid": "^5.1.6",
     "next": "16.1.1",
     "pino": "^10.1.1",

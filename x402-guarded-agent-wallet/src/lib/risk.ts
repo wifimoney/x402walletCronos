@@ -32,18 +32,14 @@ export function evaluateRisk(
         return { score, flags, reason };
     }
 
-    // 2. Slippage Risk
-    if (intent.params.maxSlippageBps > MAX_SAFE_SLIPPAGE_BPS) {
-        score += 30;
-        flags.push(RISK_FLAGS.HIGH_SLIPPAGE);
-        reason = reason || `High slippage tolerance (> ${MAX_SAFE_SLIPPAGE_BPS / 100}%)`;
-    }
+    // 2. Slippage Risk (Skipped for Transfer)
+    // if ((intent.params as any).maxSlippageBps > MAX_SAFE_SLIPPAGE_BPS) { ... }
 
     // 3. Liquidity / Simulation Risk
-    if (!preflight.simulation && !preflight.quote) {
+    if (!preflight.simulation && !preflight.data) {
         score += 50;
-        flags.push(RISK_FLAGS.NO_LIQUIDITY);
-        reason = reason || "No valid quote or simulation found.";
+        flags.push(RISK_FLAGS.NO_LIQUIDITY); // Or NO_DATA
+        reason = reason || "No valid balance data or simulation found.";
     } else if (preflight.simulation && !preflight.simulation.success) {
         score += 80;
         flags.push(RISK_FLAGS.SIMULATION_FAILED);

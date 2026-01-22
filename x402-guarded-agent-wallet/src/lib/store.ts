@@ -6,6 +6,8 @@ type PaymentRecord = {
   nonce?: string;
   settledTxHash?: string;
   receipt?: unknown;
+  verified?: boolean; // New field
+  settled?: boolean;  // New field
   ts: number;
 };
 

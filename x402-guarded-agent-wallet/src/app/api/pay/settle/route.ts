@@ -25,16 +25,19 @@ export async function POST(req: Request) {
     );
     const nonce = decoded?.payload?.nonce as string | undefined;
 
-    if (out.settle && (out.settle as any).event === "payment.settled") {
+    if (out.verify?.isValid) {
+      const settled = (out.settle as any)?.event === "payment.settled";
       markPaid({
         intentId: parsed.data.intentId,
         nonce,
-        settledTxHash: (out.settle as any).txHash,
+        settledTxHash: (out.settle as any)?.txHash,
         receipt: out.settle,
+        verified: out.verify.isValid,
+        settled,
         ts: Date.now(),
       });
     }
-  } catch { }
+  } catch (e) { console.error("Settle route error", e); }
 
   return NextResponse.json({ ok: true, ...out });
 }

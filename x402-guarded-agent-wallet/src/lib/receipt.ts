@@ -20,7 +20,15 @@ export function buildRunReceipt(args: {
   risk?: RiskAnalysis;
   preflight: PreflightReceipt;
   dryRun: boolean;
-  payment?: { ok: boolean; receiptId?: string; txHash?: string; error?: string } | null;
+  payment?: {
+    ok: boolean;
+    receiptId?: string;
+    txHash?: string;
+    error?: string;
+    verified?: boolean;
+    settled?: boolean;
+    settlementTxHash?: string;
+  } | null;
   execution?: { txHash: string; status: "success" | "reverted"; logsSummary?: string[] } | null;
   trace: RunReceipt["trace"];
 }): RunReceipt {
@@ -34,17 +42,17 @@ export function buildRunReceipt(args: {
     payment: args.payment ?? null,
     x402: args.payment?.ok
       ? {
-        verify: { isValid: true, timestamp: Date.now() },
+        verify: { isValid: !!args.payment.verified, timestamp: Date.now() },
         settle: {
-          txHash: args.payment.txHash,
-          link: args.payment.txHash
-            ? `https://explorer.cronos.org/testnet/tx/${args.payment.txHash}`
+          txHash: args.payment.settlementTxHash || args.payment.txHash,
+          link: (args.payment.settlementTxHash || args.payment.txHash)
+            ? `https://explorer.cronos.org/testnet/tx/${args.payment.settlementTxHash || args.payment.txHash}`
             : undefined,
           timestamp: Date.now(),
         },
         trace: [
-          { step: "verify", ok: true, timestamp: Date.now() },
-          { step: "settle", ok: !!args.payment.txHash, timestamp: Date.now() }
+          { step: "verify", ok: !!args.payment.verified, timestamp: Date.now() },
+          { step: "settle", ok: !!(args.payment.settlementTxHash || args.payment.txHash), timestamp: Date.now() }
         ]
       }
       : undefined,
