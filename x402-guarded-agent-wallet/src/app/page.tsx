@@ -659,7 +659,19 @@ export default function Page() {
                           }`}
                       >
                         <div className="flex justify-between items-start mb-2">
-                          <span className={`text-[9px] px-1.5 py-px rounded border font-mono font-bold tracking-tight ${statusColor}`}>{status}</span>
+                          <div className="flex items-center gap-1.5">
+                            <span className={`text-[9px] px-1.5 py-px rounded border font-mono font-bold tracking-tight ${statusColor}`}>{status}</span>
+                            {r.execution?.txHash && r.execution?.status === 'success' && (
+                              <span className="text-[8px] px-1 py-px rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" title="Chain-confirmed">
+                                ⛓️ Confirmed
+                              </span>
+                            )}
+                            {r.execution?.txHash && r.execution?.status === 'reverted' && (
+                              <span className="text-[8px] px-1 py-px rounded bg-red-500/10 text-red-400 border border-red-500/20" title="Chain-reverted">
+                                ⛓️ Reverted
+                              </span>
+                            )}
+                          </div>
                           <span className="text-[9px] text-gray-600 font-mono group-hover:text-gray-400 transition-colors">
                             {rid?.slice(0, 8)}
                           </span>
@@ -764,8 +776,8 @@ export default function Page() {
                       title={!runReceipt.preflight?.data?.sufficient ? "Insufficient balance for fee" : ""}
                     >
                       {isPaid ? (
-                        <><span>Sent</span> <span className="text-lg">✓</span></>
-                      ) : loading ? "..." : "2. Pay (x402)"}
+                        <>2. Pay Fee <span className="text-lg">✅</span></>
+                      ) : loading ? "Pending..." : "2. Pay Fee (x402)"}
                     </button>
 
                     {/* Step 3: Execute */}
@@ -779,7 +791,9 @@ export default function Page() {
                       title={!isPaid && !runReceipt.preflight?.data?.sufficientForTotal ? "Insufficient balance for Total (Amount + Fee)" : ""}
                     >
                       {isExecuted ? (
-                        <><span>Executed</span> <span className="text-lg">✓</span></>
+                        runReceipt.execution?.status === "success"
+                          ? <>3. Transfer <span className="text-lg">✅</span></>
+                          : <>3. Transfer <span className="text-lg">❌</span></>
                       ) : loading ? "Executing..." : "3. Execute Transfer"}
                     </button>
                     {/* Show tx link after execution */}

@@ -44,8 +44,8 @@ export default function RecipientSelector({
                 <button
                     onClick={() => handleModeChange("fee")}
                     className={`flex-1 py-2 px-3 rounded-md border text-[10px] font-medium uppercase tracking-wide transition-all ${mode === "fee"
-                            ? "bg-blue-500/20 border-blue-500/50 text-blue-300"
-                            : "border-gray-700 text-gray-500 hover:border-gray-600 hover:text-gray-400"
+                        ? "bg-blue-500/20 border-blue-500/50 text-blue-300"
+                        : "border-gray-700 text-gray-500 hover:border-gray-600 hover:text-gray-400"
                         }`}
                 >
                     Fee Wallet
@@ -54,10 +54,10 @@ export default function RecipientSelector({
                     onClick={() => handleModeChange("self")}
                     disabled={!userAddress}
                     className={`flex-1 py-2 px-3 rounded-md border text-[10px] font-medium uppercase tracking-wide transition-all ${mode === "self"
-                            ? "bg-emerald-500/20 border-emerald-500/50 text-emerald-300"
-                            : !userAddress
-                                ? "border-gray-800 text-gray-700 cursor-not-allowed"
-                                : "border-gray-700 text-gray-500 hover:border-gray-600 hover:text-gray-400"
+                        ? "bg-emerald-500/20 border-emerald-500/50 text-emerald-300"
+                        : !userAddress
+                            ? "border-gray-800 text-gray-700 cursor-not-allowed"
+                            : "border-gray-700 text-gray-500 hover:border-gray-600 hover:text-gray-400"
                         }`}
                 >
                     Self
@@ -65,8 +65,8 @@ export default function RecipientSelector({
                 <button
                     onClick={() => handleModeChange("custom")}
                     className={`flex-1 py-2 px-3 rounded-md border text-[10px] font-medium uppercase tracking-wide transition-all ${mode === "custom"
-                            ? "bg-amber-500/20 border-amber-500/50 text-amber-300"
-                            : "border-gray-700 text-gray-500 hover:border-gray-600 hover:text-gray-400"
+                        ? "bg-amber-500/20 border-amber-500/50 text-amber-300"
+                        : "border-gray-700 text-gray-500 hover:border-gray-600 hover:text-gray-400"
                         }`}
                 >
                     Custom
@@ -85,6 +85,9 @@ export default function RecipientSelector({
 
             <div className="text-[10px] text-gray-600 font-mono truncate">
                 → {value?.slice(0, 10)}...{value?.slice(-8)}
+            </div>
+            <div className="text-[9px] text-gray-600 italic mt-1">
+                Fee wallet receives x402 fee. Transfer recipient is separate.
             </div>
         </div>
     );
