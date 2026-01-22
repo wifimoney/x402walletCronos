@@ -12,6 +12,9 @@ import RecipientSelector from "@/components/RecipientSelector";
 import SupportTicket from "@/components/SupportTicket";
 import ReconcileButton from "@/components/ReconcileButton";
 import { FileImporter } from "@/components/FileImporter";
+import { AgentPanel } from "@/components/AgentPanel";
+import { ExportButtons } from "@/components/ExportButtons";
+import { ExpiryCountdown } from "@/components/ExpiryCountdown";
 
 // Default seller address (could be env var)
 const DEFAULT_SELLER = "0x5077eDDBCEA8692E81338aDC922ACF1A47699885";
@@ -457,12 +460,12 @@ export default function Page() {
         {/* TOP BAR: Header + Connect */}
         <header className="flex justify-between items-center mb-8 bg-black/40 p-4 rounded-xl border border-white/5 backdrop-blur-md">
           <div className="flex items-center gap-4">
-            <div className="bg-blue-600 w-10 h-10 rounded-lg flex items-center justify-center shadow-[0_0_15px_rgba(37,99,235,0.5)]">
-              <span className="text-xl font-bold text-white">4</span>
+            <div className="w-16 h-16 flex items-center justify-center drop-shadow-[0_0_10px_rgba(56,189,248,0.5)]">
+              <img src="/chronoguard-logo.png" alt="ChronoGuard" className="w-16 h-16 object-contain" />
             </div>
             <div>
               <h1 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-indigo-400">
-                x402 Guarded Agent Wallet
+                ChronoGuard <span className="text-lg opacity-70">x402 Guarded Agent Wallet</span>
               </h1>
               <div className="flex items-center gap-3 text-[10px] text-gray-500 font-mono mt-1">
                 <span>CRONOS CONTROL TOWER</span>
@@ -701,7 +704,7 @@ export default function Page() {
           </div>
 
           {/* RIGHT COLUMN: Details (8 cols) */}
-          <div className="col-span-12 lg:col-span-8 space-y-6">
+          <div className="col-span-12 lg:col-span-5 space-y-6">
 
             {err && (
               <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl flex items-start gap-4 animate-in fade-in slide-in-from-top-2">
@@ -741,7 +744,15 @@ export default function Page() {
                     )}
                   </div>
 
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-3 flex-wrap">
+                    {/* Expiry Countdown */}
+                    {runReceipt?.intent?.sessionExpiry && !isPaid && (
+                      <ExpiryCountdown
+                        expiryUnix={runReceipt.intent.sessionExpiry}
+                        onExpired={() => console.log("Intent expired - regenerate")}
+                      />
+                    )}
+
                     {/* Step 2: Pay */}
                     <button
                       onClick={payAgentFee}
@@ -1005,6 +1016,8 @@ export default function Page() {
                           {JSON.stringify(runReceipt, null, 2)}
                         </div>
 
+                        <ExportButtons runReceipt={runReceipt} />
+
                         <SupportTicket
                           runReceipt={runReceipt}
                           chainId={wallet?.chainId || 338}
@@ -1028,6 +1041,12 @@ export default function Page() {
             )}
 
           </div>
+
+          {/* RIGHT COLUMN: Agent Tools (3 cols) */}
+          <div className="col-span-12 lg:col-span-3 space-y-6">
+            <AgentPanel walletAddress={wallet?.address} />
+          </div>
+
         </div>
 
       </div>

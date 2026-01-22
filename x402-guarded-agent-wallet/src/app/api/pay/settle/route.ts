@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { SettleReqSchema, verifyAndSettle } from "@/lib/x402";
-import { markPaid } from "@/lib/store";
+import { markPaid, getPaid } from "@/lib/store";
 
 export async function POST(req: Request) {
   const body = await req.json().catch(() => null);
@@ -13,10 +13,55 @@ export async function POST(req: Request) {
     );
   }
 
-  const out = await verifyAndSettle({
-    paymentHeader: parsed.data.paymentHeader,
-    paymentRequirements: parsed.data.paymentRequirements as any,
-  });
+  // Check if already paid (idempotency)
+  const existingPayment = getPaid(parsed.data.intentId);
+  if (existingPayment && existingPayment.settled) {
+    return NextResponse.json({
+      ok: true,
+      alreadyPaid: true,
+      message: "Payment already settled",
+      verify: { isValid: true },
+      settle: {
+        event: "payment.already_settled",
+        txHash: existingPayment.settledTxHash
+      }
+    });
+  }
+
+  let out: any;
+  try {
+    out = await verifyAndSettle({
+      paymentHeader: parsed.data.paymentHeader,
+      paymentRequirements: parsed.data.paymentRequirements as any,
+    });
+  } catch (error: any) {
+    // Handle "Authorization already used" error from facilitator
+    const errorMsg = error?.message || String(error);
+    if (errorMsg.includes("already used") || errorMsg.includes("Authorization")) {
+      // Try to find existing payment
+      if (existingPayment) {
+        return NextResponse.json({
+          ok: true,
+          alreadyPaid: true,
+          message: "Authorization already used - payment was previously settled",
+          verify: { isValid: true },
+          settle: {
+            event: "payment.already_settled",
+            txHash: existingPayment.settledTxHash
+          }
+        });
+      }
+      // Unknown prior settlement
+      return NextResponse.json({
+        ok: false,
+        error: "Authorization already used",
+        hint: "This payment signature was already submitted. Check your history for the prior transaction.",
+      }, { status: 409 });
+    }
+    // Other errors
+    console.error("Settle error:", error);
+    return NextResponse.json({ ok: false, error: errorMsg }, { status: 500 });
+  }
 
   // Cache payment by intentId if settled
   try {
@@ -37,7 +82,7 @@ export async function POST(req: Request) {
         ts: Date.now(),
       });
     }
-  } catch (e) { console.error("Settle route error", e); }
+  } catch (e) { console.error("Settle route cache error", e); }
 
   return NextResponse.json({ ok: true, ...out });
 }
